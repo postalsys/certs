@@ -1,6 +1,6 @@
 {
     "name": "@postalsys/certs",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "description": "Manage Let's Encrypt certificates",
     "main": "lib/certs.js",
     "scripts": {
@@ -15,17 +15,17 @@
     "devDependencies": {
         "eslint-config-nodemailer": "1.2.0",
         "eslint-config-prettier": "8.5.0",
-        "express": "4.18.1",
-        "ioredis": "5.1.0"
+        "express": "4.18.2",
+        "ioredis": "5.2.4"
     },
     "dependencies": {
         "@root/acme": "3.1.0",
         "ioredfour": "1.2.0-ioredis-06",
-        "joi": "17.6.0",
-        "msgpack5": "6.0.1",
+        "joi": "17.7.0",
+        "msgpack5": "6.0.2",
         "pem-jwk": "2.0.0",
-        "pino": "8.1.0",
+        "pino": "8.7.0",
         "punycode": "2.1.1",
-        "uuid": "8.3.2"
+        "uuid": "9.0.0"
     }
 }
