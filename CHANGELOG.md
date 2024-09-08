@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.11](https://github.com/postalsys/certs/compare/v1.0.10...v1.0.11) (2024-09-08)
+
+
+### Bug Fixes
+
+* **punycode:** Replaced punycode module with punycode.js ([c474acb](https://github.com/postalsys/certs/commit/c474acb46f90885f722a3bbd74ba824bf2a4cdae))
+
 ## [1.0.10](https://github.com/postalsys/certs/compare/v1.0.9...v1.0.10) (2024-07-03)
 
 
