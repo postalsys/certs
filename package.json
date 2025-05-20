@@ -21,7 +21,7 @@
         "eslint-config-nodemailer": "1.2.0",
         "eslint-config-prettier": "9.1.0",
         "express": "4.19.2",
-        "ioredis": "5.4.1"
+        "ioredis": "5.6.1"
     },
     "dependencies": {
         "@root/acme": "3.1.0",
@@ -29,8 +29,8 @@
         "joi": "17.13.3",
         "msgpack5": "6.0.2",
         "pem-jwk": "2.0.0",
-        "pino": "9.4.0",
+        "pino": "9.7.0",
         "punycode.js": "2.3.1",
-        "uuid": "10.0.0"
+        "uuid": "11.1.0"
     }
 }
