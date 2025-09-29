@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.12](https://github.com/postalsys/certs/compare/v1.0.11...v1.0.12) (2025-09-29)
+
+
+### Bug Fixes
+
+* Bumped deps ([762fc6e](https://github.com/postalsys/certs/commit/762fc6e0c82c63427a46fe99b23db72b8f2c7333))
+* do not use uuid library ([5d6716f](https://github.com/postalsys/certs/commit/5d6716f1c856aa9deadd596ac0b85d6433b3fec0))
+
 ## [1.0.11](https://github.com/postalsys/certs/compare/v1.0.10...v1.0.11) (2024-09-08)
 
 
