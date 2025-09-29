@@ -1,6 +1,6 @@
 {
     "name": "@postalsys/certs",
-    "version": "1.0.11",
+    "version": "1.0.12",
     "description": "Manage Let's Encrypt certificates",
     "main": "lib/certs.js",
     "scripts": {
