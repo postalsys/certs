@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.14](https://github.com/postalsys/certs/compare/v1.0.13...v1.0.14) (2026-03-23)
+
+
+### Bug Fixes
+
+* add test suite and CI workflow ([1c5569c](https://github.com/postalsys/certs/commit/1c5569c02386e8ed167672a78980e6f621a8db4a))
+* bumped deps ([2673ff0](https://github.com/postalsys/certs/commit/2673ff0db815f0b33b060afba3f9cdfe035cbd44))
+* update test matrix to Node 20, 22, 24 ([c20356b](https://github.com/postalsys/certs/commit/c20356b27e8c5e648657c404c57f22375ded0d42))
+
 ## [1.0.13](https://github.com/postalsys/certs/compare/v1.0.12...v1.0.13) (2026-03-23)
 
 
