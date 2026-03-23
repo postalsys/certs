@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.13](https://github.com/postalsys/certs/compare/v1.0.12...v1.0.13) (2026-03-23)
+
+
+### Bug Fixes
+
+* bumped deos ([3d8cc4c](https://github.com/postalsys/certs/commit/3d8cc4ce6f5a58c25f9780076dc8adc99f26d279))
+* update release workflow to Node 24 and use trusted publishers ([2392f54](https://github.com/postalsys/certs/commit/2392f547f421bbf83f32ffe4e06cbbf3f4cfc80c))
+
 ## [1.0.12](https://github.com/postalsys/certs/compare/v1.0.11...v1.0.12) (2025-09-29)
 
 
