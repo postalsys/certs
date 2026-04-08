@@ -26,7 +26,7 @@
     "dependencies": {
         "@root/acme": "3.1.0",
         "ioredfour": "1.4.1",
-        "joi": "18.0.2",
+        "joi": "18.1.2",
         "msgpack5": "6.0.2",
         "pem-jwk": "2.0.0",
         "pino": "10.3.1",
