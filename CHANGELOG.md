@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.15](https://github.com/postalsys/certs/compare/v1.0.14...v1.0.15) (2026-04-08)
+
+
+### Bug Fixes
+
+* Bumped deps ([471f304](https://github.com/postalsys/certs/commit/471f304bc25327c2738a87b6a85a43b3c24433a5))
+
 ## [1.0.14](https://github.com/postalsys/certs/compare/v1.0.13...v1.0.14) (2026-03-23)
 
 
