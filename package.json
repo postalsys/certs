@@ -21,12 +21,12 @@
         "eslint-config-nodemailer": "1.2.0",
         "eslint-config-prettier": "9.1.0",
         "express": "4.19.2",
-        "ioredis": "5.10.1"
+        "ioredis": "5.11.1"
     },
     "dependencies": {
         "@root/acme": "3.1.0",
         "ioredfour": "1.4.1",
-        "joi": "18.1.2",
+        "joi": "17.13.4",
         "msgpack5": "6.0.2",
         "pem-jwk": "2.0.0",
         "pino": "10.3.1",
