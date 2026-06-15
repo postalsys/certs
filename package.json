@@ -20,7 +20,7 @@
     "devDependencies": {
         "eslint-config-nodemailer": "1.2.0",
         "eslint-config-prettier": "9.1.0",
-        "express": "4.19.2",
+        "express": "4.22.2",
         "ioredis": "5.11.1"
     },
     "dependencies": {
