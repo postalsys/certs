@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.16](https://github.com/postalsys/certs/compare/v1.0.15...v1.0.16) (2026-07-20)
+
+
+### Bug Fixes
+
+* **deps:** update ioredfour to 1.4.2 ([11a565e](https://github.com/postalsys/certs/commit/11a565e5ea7e8ca859dc6719bd5ff3223d2c996c))
+
 ## [1.0.15](https://github.com/postalsys/certs/compare/v1.0.14...v1.0.15) (2026-06-13)
 
 
