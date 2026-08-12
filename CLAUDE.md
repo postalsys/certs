@@ -17,6 +17,9 @@ projects (notably EmailEngine).
 - `lib/acme-challenge.js` - `AcmeChallenge` class: stores and resolves pending
   HTTP-01 challenge tokens in Redis (msgpack-encoded, TTL-expired)
 - `lib/settings.js` - `Settings` helper: small Redis hash get/set abstraction
+- `lib/msgpack.js` - thin `@msgpack/msgpack` wrapper that keeps the call-site
+  contract of the deprecated `msgpack5` it replaced (Buffer in/out, undefined
+  properties omitted, trailing bytes ignored)
 - `lib/tools.js` - Shared helpers: `normalizeDomain`, `generateKey`,
   `parseCertificate`, `validationErrors`
 - `test/*.test.js` - Node.js native test runner unit tests
@@ -36,8 +39,8 @@ projects (notably EmailEngine).
 - **ACME**: `@root/acme` + `@root/csr`
 - **Storage**: Redis via an `ioredis`-compatible client (injected by the caller)
 - **Distributed locking**: `ioredfour`
-- **Validation**: `joi` (pinned to 17.x - see Dependency Management)
-- **Serialization**: `msgpack5`
+- **Validation**: `joi`
+- **Serialization**: `@msgpack/msgpack`, behind `lib/msgpack.js`
 - **Logging**: `pino` (caller may inject a pino-compatible logger)
 - **Domain handling**: `punycode.js`, `pem-jwk`
 
@@ -60,6 +63,10 @@ npm run update      # Refresh dependencies (see Dependency Management)
 - Tests do not require a live Redis server: `test/helpers/mock-redis.js` provides
   an in-memory mock. New tests should use it rather than connecting to Redis.
 - CI (`.github/workflows/test.yaml`) runs `npm test` on Node 22 and 24.
+- `test/msgpack.test.js` pins the stored wire format against hex fixtures produced
+  by the original `msgpack5`. Redis keeps certificate and ACME account records
+  indefinitely, so any change to serialization must still decode those fixtures
+  and re-encode them to identical bytes. Do not re-record them to make a test pass.
 - Always run `npm test` and confirm it is green before committing.
 
 ## Packaging Compatibility (important)
@@ -87,8 +94,10 @@ When in doubt, check a candidate dependency's `package.json` for a CommonJS
 - Dependencies are refreshed with `npm run update`, which removes
   `node_modules` and `package-lock.json`, runs `ncu -u`, and reinstalls.
 - Update policy lives in `.ncurc.js`:
-  - `joi` is held to **minor** updates only (stay on 17.x) - newer majors must be
-    verified for EmailEngine compatibility first.
+  - `ioredis` is held to **minor** updates only (stay on 5.x). This library never
+    creates a Redis client, it uses the one the caller injects, and EmailEngine is
+    itself capped at ioredis 5 by bullmq. Keeping `examples/test.js` on the same
+    major means it exercises the client consumers actually pass in.
   - `eslint-config-prettier` and `express` are pinned (rejected from auto-update).
     `express` is kept on the 4.x line.
 - After running `npm run update`, run `npm test` and review `npm audit`. Runtime

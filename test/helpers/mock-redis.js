@@ -1,7 +1,5 @@
 'use strict';
 
-const msgpack = require('msgpack5')();
-
 function createMockRedis() {
     const hashes = new Map();
     const keys = new Map();
