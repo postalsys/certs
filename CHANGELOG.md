@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.17](https://github.com/postalsys/certs/compare/v1.0.16...v1.0.17) (2026-08-12)
+
+
+### Bug Fixes
+
+* **deps:** move to joi 18 and replace deprecated msgpack5 ([145d9a5](https://github.com/postalsys/certs/commit/145d9a579a616a2c22a60d981893109f5818e2b8))
+
 ## [1.0.16](https://github.com/postalsys/certs/compare/v1.0.15...v1.0.16) (2026-07-20)
 
 
