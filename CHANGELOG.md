@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.18](https://github.com/postalsys/certs/compare/v1.0.17...v1.0.18) (2026-08-24)
+
+
+### Bug Fixes
+
+* **deps:** update ioredfour to 1.4.3, joi to 18.2.5 and drop the ioredis cap ([43a032d](https://github.com/postalsys/certs/commit/43a032d0bd725bdee937b8fb06aca9546578ab57))
+
 ## [1.0.17](https://github.com/postalsys/certs/compare/v1.0.16...v1.0.17) (2026-08-12)
 
 
