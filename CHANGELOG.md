@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.19](https://github.com/postalsys/certs/compare/v1.0.18...v1.0.19) (2026-08-31)
+
+
+### Bug Fixes
+
+* renew certificates proportionally to their lifetime ([363d3c6](https://github.com/postalsys/certs/commit/363d3c68de452ebe3406858c9006d571ff314565))
+
 ## [1.0.18](https://github.com/postalsys/certs/compare/v1.0.17...v1.0.18) (2026-08-24)
 
 
