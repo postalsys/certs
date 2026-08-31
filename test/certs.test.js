@@ -82,47 +82,62 @@ describe('Certs', () => {
 
         it('should reject invalid domain names', async () => {
             const certs = new Certs({ redis });
-            await assert.rejects(() => certs.validateDomain('not a domain!'), err => {
-                assert.equal(err.responseCode, 400);
-                assert.equal(err.code, 'invalid_domain');
-                return true;
-            });
+            await assert.rejects(
+                () => certs.validateDomain('not a domain!'),
+                err => {
+                    assert.equal(err.responseCode, 400);
+                    assert.equal(err.code, 'invalid_domain');
+                    return true;
+                }
+            );
         });
 
         it('should reject empty domain', async () => {
             const certs = new Certs({ redis });
-            await assert.rejects(() => certs.validateDomain(''), err => {
-                assert.equal(err.responseCode, 400);
-                return true;
-            });
+            await assert.rejects(
+                () => certs.validateDomain(''),
+                err => {
+                    assert.equal(err.responseCode, 400);
+                    return true;
+                }
+            );
         });
     });
 
     describe('routeHandler', () => {
         it('should reject invalid domain', async () => {
             const certs = new Certs({ redis });
-            await assert.rejects(() => certs.routeHandler('not valid!', 'token123'), err => {
-                assert.equal(err.responseCode, 400);
-                assert.equal(err.code, 'InputValidationError');
-                return true;
-            });
+            await assert.rejects(
+                () => certs.routeHandler('not valid!', 'token123'),
+                err => {
+                    assert.equal(err.responseCode, 400);
+                    assert.equal(err.code, 'InputValidationError');
+                    return true;
+                }
+            );
         });
 
         it('should reject empty token', async () => {
             const certs = new Certs({ redis });
-            await assert.rejects(() => certs.routeHandler('example.com', ''), err => {
-                assert.equal(err.responseCode, 400);
-                return true;
-            });
+            await assert.rejects(
+                () => certs.routeHandler('example.com', ''),
+                err => {
+                    assert.equal(err.responseCode, 400);
+                    return true;
+                }
+            );
         });
 
         it('should reject token exceeding max length', async () => {
             const certs = new Certs({ redis });
             const longToken = 'a'.repeat(257);
-            await assert.rejects(() => certs.routeHandler('example.com', longToken), err => {
-                assert.equal(err.responseCode, 400);
-                return true;
-            });
+            await assert.rejects(
+                () => certs.routeHandler('example.com', longToken),
+                err => {
+                    assert.equal(err.responseCode, 400);
+                    return true;
+                }
+            );
         });
 
         it('should return keyAuthorization for valid challenge', async () => {
@@ -143,11 +158,14 @@ describe('Certs', () => {
 
         it('should throw 404 for unknown challenge', async () => {
             const certs = new Certs({ redis });
-            await assert.rejects(() => certs.routeHandler('example.com', 'unknown'), err => {
-                assert.equal(err.responseCode, 404);
-                assert.equal(err.code, 'ChallengeNotFound');
-                return true;
-            });
+            await assert.rejects(
+                () => certs.routeHandler('example.com', 'unknown'),
+                err => {
+                    assert.equal(err.responseCode, 404);
+                    assert.equal(err.code, 'ChallengeNotFound');
+                    return true;
+                }
+            );
         });
     });
 
@@ -256,6 +274,24 @@ describe('Certs', () => {
             const certs = new Certs({ redis, namespace: 'skip' });
             const result = await certs.getCertificate('missing.com', true);
             assert.equal(result, false);
+        });
+
+        it('should still serve a certificate that is valid but due for renewal', async () => {
+            const certs = new Certs({ redis, namespace: 'due' });
+
+            // 45 day certificate, 10 days left: renewal is due, but the certificate still works and
+            // the SMTP and IMAP servers ask with skipAcquire on every TLS handshake.
+            await certs.setCertificateData('example.com', {
+                domain: 'example.com',
+                cert: 'currentcert',
+                status: 'valid',
+                validFrom: new Date(Date.now() - 35 * 24 * 3600 * 1000),
+                validTo: new Date(Date.now() + 10 * 24 * 3600 * 1000)
+            });
+
+            const result = await certs.getCertificate('example.com', true);
+            assert.ok(result);
+            assert.equal(result.cert, 'currentcert');
         });
 
         it('should return existing data with skipAcquire even if expired', async () => {

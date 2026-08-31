@@ -2,7 +2,7 @@
 
 const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizeDomain, generateKey, parseCertificate, validationErrors } = require('../lib/tools');
+const { normalizeDomain, generateKey, parseCertificate, validationErrors, renewalThreshold, isRenewalDue } = require('../lib/tools');
 
 // Static self-signed cert with CN=test.example.com, SAN=DNS:test.example.com,DNS:www.example.com
 const TEST_CERT = `-----BEGIN CERTIFICATE-----
@@ -145,5 +145,72 @@ describe('validationErrors', () => {
         assert.deepEqual(validationErrors({}), {});
         assert.deepEqual(validationErrors({ error: {} }), {});
         assert.deepEqual(validationErrors({ error: { details: [] } }), {});
+    });
+});
+
+const DAY = 24 * 3600 * 1000;
+const window = days => ({ validFrom: new Date('2026-01-01T00:00:00Z'), validTo: new Date(Date.parse('2026-01-01T00:00:00Z') + days * DAY) });
+
+describe('renewalThreshold', () => {
+    it('should leave a third of the lifetime for a 90 day certificate', () => {
+        assert.equal(renewalThreshold(window(90)), 30 * DAY);
+    });
+
+    it('should scale down with the lifetimes Lets Encrypt is moving to', () => {
+        // 64 day certificates from 2027-02-10, 45 day certificates from 2028-02-16
+        assert.equal(renewalThreshold(window(64)), (64 / 3) * DAY);
+        assert.equal(renewalThreshold(window(45)), 15 * DAY);
+        assert.equal(renewalThreshold(window(6)), 2 * DAY);
+    });
+
+    it('should never exceed 30 days, however long the certificate lives', () => {
+        assert.equal(renewalThreshold(window(365)), 30 * DAY);
+    });
+
+    it('should keep a day of room on a pathologically short certificate', () => {
+        assert.equal(renewalThreshold(window(1)), DAY);
+        assert.equal(renewalThreshold({ validFrom: new Date('2026-01-01'), validTo: new Date('2026-01-01T01:00:00Z') }), DAY);
+    });
+
+    it('should fall back to 30 days when there is no usable lifetime', () => {
+        assert.equal(renewalThreshold(null), 30 * DAY);
+        assert.equal(renewalThreshold({}), 30 * DAY);
+        assert.equal(renewalThreshold({ validTo: new Date('2026-06-01') }), 30 * DAY);
+        // validFrom after validTo is not a lifetime we can divide
+        assert.equal(renewalThreshold({ validFrom: new Date('2026-06-01'), validTo: new Date('2026-01-01') }), 30 * DAY);
+    });
+
+    it('should accept dates that arrive as strings', () => {
+        assert.equal(renewalThreshold({ validFrom: '2026-01-01T00:00:00Z', validTo: '2026-02-15T00:00:00Z' }), 15 * DAY);
+    });
+});
+
+describe('isRenewalDue', () => {
+    const cert = window(45);
+    const issued = Date.parse('2026-01-01T00:00:00Z');
+
+    it('should not be due before two thirds of the lifetime has elapsed', () => {
+        assert.equal(isRenewalDue(cert, new Date(issued)), false);
+        assert.equal(isRenewalDue(cert, new Date(issued + 29 * DAY)), false);
+    });
+
+    it('should be due once a third of the lifetime is left', () => {
+        assert.equal(isRenewalDue(cert, new Date(issued + 30 * DAY)), true);
+        assert.equal(isRenewalDue(cert, new Date(issued + 44 * DAY)), true);
+    });
+
+    it('should be due for a certificate that already expired', () => {
+        assert.equal(isRenewalDue(cert, new Date(issued + 100 * DAY)), true);
+    });
+
+    it('should be due when the expiry cannot be read', () => {
+        assert.equal(isRenewalDue(null), true);
+        assert.equal(isRenewalDue({}), true);
+        assert.equal(isRenewalDue({ validTo: 'not a date' }), true);
+    });
+
+    it('should default to the current time', () => {
+        assert.equal(isRenewalDue({ validFrom: new Date(Date.now() - DAY), validTo: new Date(Date.now() + 89 * DAY) }), false);
+        assert.equal(isRenewalDue({ validFrom: new Date(Date.now() - 80 * DAY), validTo: new Date(Date.now() + 10 * DAY) }), true);
     });
 });
