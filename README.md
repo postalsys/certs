@@ -84,6 +84,7 @@ app.get('/.well-known/acme-challenge/:token', (req, res) => {
 | `keyBits` | Number | `2048` | RSA key size for domain certificates |
 | `keyExponent` | Number | `65537` | RSA public exponent for domain certificates |
 | `logger` | Object | pino instance | Logger (pino-compatible) |
+| `dispatcher` | Object | undici global dispatcher | undici `Dispatcher` (for example a `ProxyAgent`) that every ACME request is sent through |
 
 ## API
 

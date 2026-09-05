@@ -30,6 +30,7 @@
         "joi": "18.2.5",
         "pem-jwk": "2.0.0",
         "pino": "10.3.1",
-        "punycode.js": "2.3.1"
+        "punycode.js": "2.3.1",
+        "undici": "7.29.0"
     }
 }

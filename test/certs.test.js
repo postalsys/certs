@@ -59,6 +59,32 @@ describe('Certs', () => {
             const certs = new Certs({ redis, acme: { caaDomains: 'letsencrypt.org' } });
             assert.ok(Array.isArray(certs.acmeOptions.caaDomains));
         });
+
+        it('should hand the ACME client a request function that uses the given dispatcher', async () => {
+            let dispatched = 0;
+            // duck-typed undici Dispatcher: fetch only ever calls dispatch()
+            const dispatcher = {
+                dispatch(opts, handler) {
+                    dispatched++;
+                    // fail the request instead of reaching the network; the point is that fetch
+                    // asked this dispatcher and not the global one
+                    handler.onError(new Error('stubbed dispatcher'));
+                    return false;
+                }
+            };
+            const certs = new Certs({ redis, dispatcher });
+            assert.equal(certs.dispatcher, dispatcher);
+            assert.equal(typeof certs.acme.__request, 'function');
+
+            await assert.rejects(certs.acme.__request({ url: 'http://acme.test/directory', json: true }));
+            assert.equal(dispatched, 1);
+        });
+
+        it('should default to no dispatcher', () => {
+            const certs = new Certs({ redis });
+            assert.equal(certs.dispatcher, null);
+            assert.equal(typeof certs.acme.__request, 'function');
+        });
     });
 
     describe('getKey', () => {

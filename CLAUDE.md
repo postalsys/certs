@@ -16,6 +16,11 @@ projects (notably EmailEngine).
   certificate acquisition/renewal, and the HTTP-01 challenge route handler
 - `lib/acme-challenge.js` - `AcmeChallenge` class: stores and resolves pending
   HTTP-01 challenge tokens in Redis (msgpack-encoded, TTL-expired)
+- `lib/acme-request.js` - `createAcmeRequest(dispatcher)`: the request function
+  handed to `@root/acme` (its `__request` hook). It replaces `@root/request` with
+  undici `fetch` so the caller's `dispatcher` option (a proxy agent) covers every
+  ACME exchange, and mirrors the response shape `@root/acme` reads back (lower-cased
+  headers, JSON body parsed when it parses, text otherwise)
 - `lib/settings.js` - `Settings` helper: small Redis hash get/set abstraction
 - `lib/msgpack.js` - thin `@msgpack/msgpack` wrapper that keeps the call-site
   contract of the deprecated `msgpack5` it replaced (Buffer in/out, undefined
@@ -36,7 +41,7 @@ projects (notably EmailEngine).
 ## Technology Stack
 
 - **Runtime**: Node.js (CommonJS). Tested on Node 22 and 24.
-- **ACME**: `@root/acme` + `@root/csr`
+- **ACME**: `@root/acme` + `@root/csr`; HTTP through `undici` (`lib/acme-request.js`)
 - **Storage**: Redis via an `ioredis`-compatible client (injected by the caller)
 - **Distributed locking**: `ioredfour`
 - **Validation**: `joi`
