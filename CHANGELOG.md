@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/postalsys/certs/compare/v1.0.19...v1.1.0) (2026-09-05)
+
+
+### Features
+
+* send ACME requests through a caller-supplied undici dispatcher ([11bee5f](https://github.com/postalsys/certs/commit/11bee5f77cdbfabb65722ae96bf1f99a6c017704))
+
 ## [1.0.19](https://github.com/postalsys/certs/compare/v1.0.18...v1.0.19) (2026-08-31)
 
 
