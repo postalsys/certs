@@ -8,7 +8,7 @@ Manage Let's Encrypt SSL/TLS certificates with automatic acquisition, renewal, a
 npm install @postalsys/certs
 ```
 
-**Requirements:** Node.js 15+ (for CAA record validation), Redis
+**Requirements:** Node.js 20+, Redis
 
 ## Usage
 
