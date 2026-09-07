@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1](https://github.com/postalsys/certs/compare/v1.1.0...v1.1.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* declare the Node 20 floor this package already has ([1f0a7d4](https://github.com/postalsys/certs/commit/1f0a7d4db4d27cbfc435d7a6ef7f0f39b1a94e47))
+* **deps:** update joi to 18.2.8 and undici to 7.29.1 ([2464c07](https://github.com/postalsys/certs/commit/2464c0733919325369e92d65854535796b83f00d))
+
 ## [1.1.0](https://github.com/postalsys/certs/compare/v1.0.19...v1.1.0) (2026-09-05)
 
 
