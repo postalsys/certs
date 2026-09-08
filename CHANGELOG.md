@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/postalsys/certs/compare/v1.1.1...v1.2.0) (2026-09-08)
+
+
+### Features
+
+* replace @root/acme with an in-house RFC 8555 client ([8f2d344](https://github.com/postalsys/certs/commit/8f2d34464cf0c55fb20522d1c06253f0ca0e2d06))
+
 ## [1.1.1](https://github.com/postalsys/certs/compare/v1.1.0...v1.1.1) (2026-09-07)
 
 
