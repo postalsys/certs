@@ -4,6 +4,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { base64url, toPrivateKey, publicJwk, thumbprint, algorithmFor, signJws } = require('../lib/jose');
+const { rsaKey, ecKey, freshEcKey } = require('./helpers/keys');
 
 // The worked example from RFC 7638 section 3.1. If the member set or the ordering of the canonical
 // JWK ever drifts, every key authorization this library builds becomes wrong, and this catches it.
@@ -13,9 +14,6 @@ const RFC7638_JWK = {
     e: 'AQAB'
 };
 const RFC7638_THUMBPRINT = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
-
-const rsaKey = () => crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey;
-const ecKey = (namedCurve = 'P-256') => crypto.generateKeyPairSync('ec', { namedCurve }).privateKey;
 
 describe('jose', () => {
     describe('base64url', () => {
@@ -79,7 +77,7 @@ describe('jose', () => {
         });
 
         it('should differ between keys', () => {
-            assert.notEqual(thumbprint(ecKey()), thumbprint(ecKey()));
+            assert.notEqual(thumbprint(freshEcKey()), thumbprint(freshEcKey()));
         });
     });
 
@@ -93,7 +91,7 @@ describe('jose', () => {
         });
 
         it('should reject a curve ACME does not pair with ES256', () => {
-            assert.throws(() => algorithmFor(ecKey('secp384r1')), /Unsupported EC curve/);
+            assert.throws(() => algorithmFor(freshEcKey('secp384r1')), /Unsupported EC curve/);
         });
 
         it('should reject an unsupported key type', () => {

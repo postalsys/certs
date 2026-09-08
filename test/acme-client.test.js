@@ -5,12 +5,10 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { AcmeClient, AcmeError, parseRetryAfter, parseLinks, splitPemChain, MAX_POLL_RETRY_AFTER, MAX_RENEWAL_INFO_RETRY_AFTER } = require('../lib/acme-client');
 const { createMockAcmeServer } = require('./helpers/mock-acme-server');
+const { rsaKey, ecKey, freshEcKey } = require('./helpers/keys');
 
 // The mock answers instantly, so the poll interval only has to be non-zero.
 const TEST_TIMEOUTS = { validation: 5000, order: 5000, poll: 1 };
-
-const ecKey = () => crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey;
-const rsaKey = () => crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey;
 
 // A challenge handler backed by a Map, standing in for the Redis-backed one.
 function createChallengeStore() {
@@ -171,7 +169,7 @@ describe('AcmeClient', () => {
         it('should be idempotent for the same key, which is how an existing account is found', async () => {
             const server = createMockAcmeServer();
             const client = new AcmeClient({ directoryUrl: server.directoryUrl, request: server.request });
-            const key = ecKey();
+            const key = freshEcKey();
 
             const first = await client.createAccount({ key });
             const second = await client.createAccount({ key });

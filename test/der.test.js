@@ -6,9 +6,7 @@ const crypto = require('node:crypto');
 const { createCsr, readCertificateIdentifiers, encodeLength, integer, objectIdentifier, readTlv, readChildren } = require('../lib/der');
 const { createTestCa } = require('./helpers/test-ca');
 const { publicKeyFromCsr } = require('./helpers/mock-acme-server');
-
-const rsaKey = () => crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey;
-const ecKey = () => crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey;
+const { rsaKey, ecKey } = require('./helpers/keys');
 
 describe('der', () => {
     describe('encodeLength', () => {
