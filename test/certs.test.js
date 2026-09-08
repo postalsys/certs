@@ -421,7 +421,15 @@ describe('Certs acquisition', () => {
         return { server, tokens };
     }
 
-    const newCerts = redis => new Certs({ redis, acme: { environment: 'test', caaDomains: [] }, logger: silentLogger() });
+    // Locking is stubbed on every instance this suite builds. ioredfour needs a real Redis, and a
+    // lock it cannot reach does not fail, it waits: five getAcmeAccount tests once hung for over a
+    // minute each in CI, and passed locally only because a Redis happened to be running. Any test
+    // that cares about the locking installs its own stub over this one.
+    const newCerts = redis => {
+        const certs = new Certs({ redis, acme: { environment: 'test', caaDomains: [] }, logger: silentLogger() });
+        stubLocking(certs);
+        return certs;
+    };
 
     const silentLogger = () => ({ trace: () => false, info: () => false, error: () => false });
 
@@ -732,6 +740,7 @@ describe('Certs acquisition', () => {
                 encryptFn: async value => `enc:${value}`,
                 decryptFn: async value => value.replace(/^enc:/, '')
             });
+            stubLocking(certs);
             connect(certs);
 
             const account = await certs.getAcmeAccount();
