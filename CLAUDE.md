@@ -13,15 +13,33 @@ projects (notably EmailEngine).
 ## Project Structure
 
 - `lib/certs.js` - Main `Certs` class: ACME account setup, domain validation,
-  certificate acquisition/renewal, and the HTTP-01 challenge route handler
+  certificate acquisition/renewal, renewal information, and the HTTP-01 challenge
+  route handler
+- `lib/acme-client.js` - `AcmeClient`: the RFC 8555 client, plus RFC 9773 renewal
+  information. Transport-free; it is handed a request function
+- `lib/jose.js` - public JWK export, RFC 7638 thumbprints and flattened JWS signing,
+  all on `node:crypto`
+- `lib/der.js` - a minimal DER writer and reader: builds the PKCS#10 certificate
+  signing request, and reads the serial number and Authority Key Identifier that an
+  RFC 9773 `certID` is made of. Node has no CSR builder and no access to certificate
+  extensions, which is the only reason this file exists
 - `lib/acme-challenge.js` - `AcmeChallenge` class: stores and resolves pending
   HTTP-01 challenge tokens in Redis (msgpack-encoded, TTL-expired)
-- `lib/acme-request.js` - `createAcmeRequest(dispatcher)`: the request function
-  handed to `@root/acme` (its `__request` hook). It replaces `@root/request` with
-  undici `fetch` so the caller's `dispatcher` option (a proxy agent) covers every
-  ACME exchange, and mirrors the response shape `@root/acme` reads back (lower-cased
-  headers, JSON body parsed when it parses, text otherwise)
+- `lib/acme-request.js` - `createAcmeRequest(dispatcher)`: the request function the
+  ACME client sends every exchange through. undici `fetch`, so the caller's
+  `dispatcher` option (a proxy agent) covers every ACME exchange. Returns
+  `{statusCode, headers, body}` with lower-cased headers and the body parsed as JSON
+  when it parses; it never throws on an error status, because deciding what is
+  retryable is the client's job
 - `lib/settings.js` - `Settings` helper: small Redis hash get/set abstraction
+
+### Storage layout
+
+A certificate record is split across Redis fields on purpose. `SIDE_FIELDS` in `lib/certs.js`
+(`privateKey`, `lastCheck`, `lastError`, `renewalInfo`) each get their own field; everything else is
+merged into one `domain:<d>:data` blob by a read-then-write. That merge is only safe under the
+per-domain operation lock, so anything written from a path that does not hold the lock has to be a
+side field. Renewal information is refreshed in the background, which is exactly why it is one.
 - `lib/msgpack.js` - thin `@msgpack/msgpack` wrapper that keeps the call-site
   contract of the deprecated `msgpack5` it replaced (Buffer in/out, undefined
   properties omitted, trailing bytes ignored)
@@ -41,13 +59,14 @@ projects (notably EmailEngine).
 ## Technology Stack
 
 - **Runtime**: Node.js (CommonJS). Tested on Node 22 and 24.
-- **ACME**: `@root/acme` + `@root/csr`; HTTP through `undici` (`lib/acme-request.js`)
+- **ACME**: in-house (`lib/acme-client.js`), on `node:crypto` only; HTTP through
+  `undici` (`lib/acme-request.js`)
 - **Storage**: Redis via an `ioredis`-compatible client (injected by the caller)
 - **Distributed locking**: `ioredfour`
 - **Validation**: `joi`
 - **Serialization**: `@msgpack/msgpack`, behind `lib/msgpack.js`
 - **Logging**: `pino` (caller may inject a pino-compatible logger)
-- **Domain handling**: `punycode.js`, `pem-jwk`
+- **Domain handling**: `punycode.js`
 
 `ioredis` and `express` are devDependencies only (used by tests and examples);
 they are not runtime dependencies of the library.
@@ -55,7 +74,7 @@ they are not runtime dependencies of the library.
 ## Development Commands
 
 ```
-npm test            # Run the full test suite (node --test test/*.test.js)
+npm test            # Run the full test suite (node --test --test-force-exit test/*.test.js)
 npm run update      # Refresh dependencies (see Dependency Management)
 ```
 
@@ -67,6 +86,21 @@ npm run update      # Refresh dependencies (see Dependency Management)
   run as tests.
 - Tests do not require a live Redis server: `test/helpers/mock-redis.js` provides
   an in-memory mock. New tests should use it rather than connecting to Redis.
+- `test/helpers/mock-acme-server.js` is an in-memory ACME server that speaks the
+  transport contract of `lib/acme-request.js`, so the whole issuance flow runs
+  without a socket. It verifies JWS signatures, nonces and the `url` header field,
+  and it is modelled on **Boulder**, not on a lenient reading of the RFC:
+  finalize is accepted only while the order is `ready`, issuance is asynchronous, and
+  problem documents carry their real HTTP status. Both behaviours are what the
+  previous `@root/acme` based implementation got wrong, so keep them.
+- `test/helpers/test-ca.js` is a small X.509 CA, so the mock server can hand back a
+  certificate that `crypto.X509Certificate` parses and that carries the extensions
+  the renewal information code reads. Its DER writing is deliberately independent of
+  `lib/der.js`: two implementations that have to agree catch an encoding mistake that
+  one shared implementation would hide. Do not merge them.
+- For live testing against a real CA, `examples/test.js` serves the challenge on port
+  7003 for `localdev.kreata.ee`, which an SSH reverse tunnel
+  (`ssh -R 7003:localhost:7003 kreata.ee`) forwards from that host's nginx.
 - CI (`.github/workflows/test.yaml`) runs `npm test` on Node 22 and 24.
 - `test/msgpack.test.js` pins the stored wire format against hex fixtures produced
   by the original `msgpack5`. Redis keeps certificate and ACME account records
@@ -98,6 +132,10 @@ When in doubt, check a candidate dependency's `package.json` for a CommonJS
 
 - Dependencies are refreshed with `npm run update`, which removes
   `node_modules` and `package-lock.json`, runs `ncu -u`, and reinstalls.
+- The ACME implementation has no dependencies of its own. Certificate issuance runs
+  on `node:crypto` and `undici`, and must stay that way: pulling in an ASN.1 or JOSE
+  library to add a feature is how this package ended up on an abandoned stack the
+  first time.
 - Update policy lives in `.ncurc.js`:
   - `ioredis` is held to **minor** updates only (stay on 5.x). This library never
     creates a Redis client, it uses the one the caller injects, and EmailEngine is

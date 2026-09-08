@@ -125,6 +125,25 @@ describe('createAcmeRequest', () => {
         assert.equal(resp.body.detail, 'nope');
     });
 
+    it('aborts a request that outlives its timeout', async () => {
+        // a CA that accepts the connection and then goes quiet must not hold a renewal open
+        const stalled = http.createServer(() => {
+            // never respond
+        });
+        await new Promise(resolve => stalled.listen(0, '127.0.0.1', resolve));
+
+        try {
+            const request = createAcmeRequest();
+            await assert.rejects(request({ url: `http://127.0.0.1:${stalled.address().port}/hang`, json: true, timeout: 150 }), err => {
+                assert.match(`${err.message} ${err.cause && err.cause.name}`, /abort|timeout|TimeoutError/i);
+                return true;
+            });
+        } finally {
+            stalled.closeAllConnections();
+            await new Promise(resolve => stalled.close(resolve));
+        }
+    });
+
     it('sends the request through the given dispatcher', async () => {
         const agent = new CountingAgent();
         try {

@@ -2,7 +2,8 @@
 
 const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizeDomain, generateKey, parseCertificate, validationErrors, renewalThreshold, isRenewalDue } = require('../lib/tools');
+const crypto = require('node:crypto');
+const { normalizeDomain, toAsciiDomain, generateKey, parseCertificate, validationErrors, renewalThreshold, isRenewalDue } = require('../lib/tools');
 
 // Static self-signed cert with CN=test.example.com, SAN=DNS:test.example.com,DNS:www.example.com
 const TEST_CERT = `-----BEGIN CERTIFICATE-----
@@ -212,5 +213,166 @@ describe('isRenewalDue', () => {
     it('should default to the current time', () => {
         assert.equal(isRenewalDue({ validFrom: new Date(Date.now() - DAY), validTo: new Date(Date.now() + 89 * DAY) }), false);
         assert.equal(isRenewalDue({ validFrom: new Date(Date.now() - 80 * DAY), validTo: new Date(Date.now() + 10 * DAY) }), true);
+    });
+});
+
+describe('generateKey key types', () => {
+    it('should default to an RSA key in pkcs1 PEM, the shape earlier releases stored', async () => {
+        const pem = await generateKey();
+        assert.match(pem, /^-----BEGIN RSA PRIVATE KEY-----/);
+
+        const key = crypto.createPrivateKey(pem);
+        assert.equal(key.asymmetricKeyType, 'rsa');
+        assert.equal(key.asymmetricKeyDetails.modulusLength, 2048);
+        assert.equal(key.asymmetricKeyDetails.publicExponent, 65537n);
+    });
+
+    it('should honour an explicit RSA size', async () => {
+        const key = crypto.createPrivateKey(await generateKey(3072));
+        assert.equal(key.asymmetricKeyDetails.modulusLength, 3072);
+    });
+
+    it('should generate a P-256 key when asked for ec', async () => {
+        const pem = await generateKey(null, null, { keyType: 'ec' });
+        assert.match(pem, /^-----BEGIN EC PRIVATE KEY-----/);
+
+        const key = crypto.createPrivateKey(pem);
+        assert.equal(key.asymmetricKeyType, 'ec');
+        assert.equal(key.asymmetricKeyDetails.namedCurve, 'prime256v1');
+    });
+
+    it('should ignore RSA sizing for an EC key', async () => {
+        const key = crypto.createPrivateKey(await generateKey(4096, 3, { keyType: 'ec' }));
+        assert.equal(key.asymmetricKeyDetails.namedCurve, 'prime256v1');
+    });
+
+    it('should reject an unknown key type', async () => {
+        await assert.rejects(generateKey(null, null, { keyType: 'ed25519' }), /Unsupported key type/);
+    });
+});
+
+describe('isRenewalDue with renewal information', () => {
+    const now = new Date('2026-06-01T00:00:00Z');
+    const certificate = {
+        serialNumber: 'ABCD1234',
+        validFrom: new Date('2026-05-01T00:00:00Z'),
+        validTo: new Date('2026-07-30T00:00:00Z') // 90 days, nowhere near due on the lifetime rule
+    };
+
+    const withWindow = (start, end, overrides = {}) =>
+        Object.assign({}, certificate, {
+            renewalInfo: Object.assign({ suggestedWindow: { start, end }, serialNumber: certificate.serialNumber, fetchedAt: now }, overrides)
+        });
+
+    it('should not be due before the suggested window', () => {
+        assert.equal(isRenewalDue(withWindow(new Date('2026-06-10T00:00:00Z'), new Date('2026-06-12T00:00:00Z')), now), false);
+    });
+
+    it('should be due once the whole window is in the past', () => {
+        assert.equal(isRenewalDue(withWindow(new Date('2026-05-20T00:00:00Z'), new Date('2026-05-22T00:00:00Z')), now), true);
+    });
+
+    it('should override the lifetime rule, renewing earlier than it would', () => {
+        // The lifetime rule says no: two thirds of the lifetime has not elapsed.
+        assert.equal(isRenewalDue(certificate, now), false);
+        assert.equal(isRenewalDue(withWindow(new Date('2026-05-01T00:00:00Z'), new Date('2026-05-02T00:00:00Z')), now), true);
+    });
+
+    it('should override the lifetime rule the other way, holding a renewal back', () => {
+        // A 46 day certificate, two thirds through its life, so the lifetime rule says renew now.
+        const expiringSoon = Object.assign({}, certificate, { validTo: new Date('2026-06-16T00:00:00Z') });
+        assert.equal(isRenewalDue(expiringSoon, now), true);
+
+        // The CA suggests a few days later, still comfortably before the backstop.
+        const held = Object.assign({}, expiringSoon, {
+            renewalInfo: {
+                suggestedWindow: { start: new Date('2026-06-05T00:00:00Z'), end: new Date('2026-06-06T00:00:00Z') },
+                serialNumber: certificate.serialNumber,
+                fetchedAt: now
+            }
+        });
+        assert.equal(isRenewalDue(held, now), false);
+    });
+
+    it('should not let the CA hold a renewal back past the backstop', () => {
+        // A window that opens after the certificate has expired, which is what a CA bug or a badly
+        // stale record looks like. The lifetime rule has to win.
+        const held = withWindow(new Date('2026-08-01T00:00:00Z'), new Date('2026-08-02T00:00:00Z'));
+        assert.equal(isRenewalDue(held, new Date('2026-07-20T00:00:00Z')), true);
+    });
+
+    it('should pick a point inside the window rather than its start', () => {
+        const start = new Date('2026-05-10T00:00:00Z');
+        const end = new Date('2026-05-20T00:00:00Z');
+        // Just after the window opens the answer depends on where in the window this serial lands,
+        // so scan the window and check the switch happens strictly inside it.
+        const data = withWindow(start, end);
+        assert.equal(isRenewalDue(data, start), false);
+        assert.equal(isRenewalDue(data, end), true);
+    });
+
+    it('should spread certificates across the window instead of renewing them all at once', () => {
+        const start = new Date('2026-05-10T00:00:00Z');
+        const end = new Date('2026-05-20T00:00:00Z');
+        const midpoint = new Date((start.getTime() + end.getTime()) / 2);
+
+        const verdicts = new Set();
+        for (let i = 0; i < 40; i++) {
+            const data = Object.assign({}, certificate, {
+                serialNumber: `SERIAL${i}`,
+                renewalInfo: { suggestedWindow: { start, end }, serialNumber: `SERIAL${i}`, fetchedAt: now }
+            });
+            verdicts.add(isRenewalDue(data, midpoint));
+        }
+
+        assert.equal(verdicts.size, 2, 'half way through the window some are due and some are not');
+    });
+
+    it('should be stable for one certificate across repeated checks', () => {
+        const data = withWindow(new Date('2026-05-10T00:00:00Z'), new Date('2026-05-20T00:00:00Z'));
+        const at = new Date('2026-05-15T00:00:00Z');
+        const first = isRenewalDue(data, at);
+        for (let i = 0; i < 5; i++) {
+            assert.equal(isRenewalDue(data, at), first);
+        }
+    });
+
+    it('should ignore advice fetched for a different certificate', () => {
+        const stale = withWindow(new Date('2026-05-01T00:00:00Z'), new Date('2026-05-02T00:00:00Z'), { serialNumber: 'OLDSERIAL' });
+        assert.equal(isRenewalDue(stale, now), false);
+    });
+
+    it('should ignore advice the CA has not confirmed for over a week', () => {
+        const stale = withWindow(new Date('2026-05-01T00:00:00Z'), new Date('2026-05-02T00:00:00Z'), {
+            fetchedAt: new Date('2026-05-20T00:00:00Z')
+        });
+        assert.equal(isRenewalDue(stale, now), false);
+    });
+
+    it('should ignore a malformed window', () => {
+        assert.equal(isRenewalDue(withWindow('not a date', 'nor this'), now), false);
+        assert.equal(isRenewalDue(withWindow(new Date('2026-05-20T00:00:00Z'), new Date('2026-05-10T00:00:00Z')), now), false);
+    });
+
+    it('should accept a window whose dates arrive as strings', () => {
+        assert.equal(isRenewalDue(withWindow('2026-05-01T00:00:00Z', '2026-05-02T00:00:00Z'), now), true);
+    });
+});
+
+describe('normalizeDomain with A-labels', () => {
+    it('should decode an A-label in any position, not only the first', () => {
+        assert.equal(normalizeDomain('xn--tst-jma.com'), 'tëst.com');
+        assert.equal(normalizeDomain('www.xn--tst-jma.com'), 'www.tëst.com');
+        assert.equal(normalizeDomain('a.b.xn--tst-jma.example.com'), 'a.b.tëst.example.com');
+    });
+
+    it('should leave a plain ASCII domain alone', () => {
+        assert.equal(normalizeDomain('WWW.Example.COM '), 'www.example.com');
+    });
+
+    it('should round trip with toAsciiDomain', () => {
+        for (const domain of ['tëst.com', 'www.tëst.com', 'example.com', 'a.b.c.example.com']) {
+            assert.equal(normalizeDomain(toAsciiDomain(domain)), domain);
+        }
     });
 });

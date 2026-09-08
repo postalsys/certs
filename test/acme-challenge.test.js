@@ -30,12 +30,6 @@ describe('AcmeChallenge', () => {
         });
     });
 
-    describe('init', () => {
-        it('should return null', () => {
-            assert.equal(challenge.init(), null);
-        });
-    });
-
     describe('getKey', () => {
         it('should prefix with namespace', () => {
             assert.equal(challenge.getKey('foo'), 'test:certs:foo');
@@ -76,7 +70,7 @@ describe('AcmeChallenge', () => {
 
             await challenge.set({
                 challenge: {
-                    altname: 'example.com',
+                    identifier: { value: 'example.com' },
                     keyAuthorization: 'auth-value-123',
                     token: 'challenge-token'
                 }
@@ -92,7 +86,7 @@ describe('AcmeChallenge', () => {
                 () =>
                     challenge.set({
                         challenge: {
-                            altname: 'unknown.com',
+                            identifier: { value: 'unknown.com' },
                             keyAuthorization: 'auth',
                             token: 'tok'
                         }
@@ -110,7 +104,7 @@ describe('AcmeChallenge', () => {
             await challenge.settings.set('domain:example.com:data', { domain: 'example.com' });
             await challenge.set({
                 challenge: {
-                    altname: 'example.com',
+                    identifier: { value: 'example.com' },
                     keyAuthorization: 'my-auth-key',
                     token: 'my-token'
                 }
