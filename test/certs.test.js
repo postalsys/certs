@@ -87,6 +87,93 @@ describe('Certs', () => {
         });
     });
 
+    describe('option names', () => {
+        // Why these lists exist: see TOP_LEVEL_OPTIONS in lib/certs.js.
+        it('should refuse every ACME-only option at the top level, naming the fix', () => {
+            for (const name of ['environment', 'directoryUrl', 'email', 'caaDomains', 'profile', 'preferredChain', 'externalAccountBinding', 'timeouts']) {
+                assert.throws(
+                    () => new Certs({ redis, [name]: 'x' }),
+                    { code: 'InputValidationError', message: /is an ACME option .* move it inside the "acme" block/ },
+                    `${name} at the top level is refused, and told where to go`
+                );
+            }
+        });
+
+        it('should refuse a top-level option passed inside the acme block', () => {
+            assert.throws(() => new Certs({ redis, acme: { dispatcher: {} } }), {
+                code: 'InputValidationError',
+                message: /"acme.dispatcher" is not an ACME option/
+            });
+        });
+
+        it('should refuse an unrecognised name at either level', () => {
+            assert.throws(() => new Certs({ redis, directoyUrl: 'typo' }), { code: 'InputValidationError', message: /not a recognised option/ });
+            assert.throws(() => new Certs({ redis, acme: { enviroment: 'typo' } }), {
+                code: 'InputValidationError',
+                message: /"acme.enviroment" is not a recognised option/
+            });
+        });
+
+        // The one case where the same name is correct in both places.
+        it('should accept the key options at both levels', () => {
+            const certs = new Certs({
+                redis,
+                keyBits: 3072,
+                keyExponent: 65537,
+                keyType: 'rsa',
+                acme: { keyBits: 4096, keyExponent: 65537, keyType: 'ec' }
+            });
+
+            assert.equal(certs.keyBits, 3072);
+            assert.equal(certs.acmeOptions.keyBits, 4096);
+            assert.equal(certs.keyType, 'rsa');
+            assert.equal(certs.acmeOptions.keyType, 'ec');
+        });
+
+        it('should accept every documented option together', () => {
+            assert.doesNotThrow(
+                () =>
+                    new Certs({
+                        redis,
+                        namespace: 'ns',
+                        encryptFn: async v => v,
+                        decryptFn: async v => v,
+                        keyBits: 2048,
+                        keyExponent: 65537,
+                        keyType: 'rsa',
+                        logger: { trace: () => false, info: () => false, error: () => false },
+                        dispatcher: null,
+                        acme: {
+                            environment: 'production',
+                            directoryUrl: 'https://acme-v02.api.letsencrypt.org/directory',
+                            email: 'ops@example.com',
+                            caaDomains: ['letsencrypt.org'],
+                            keyBits: 2048,
+                            keyExponent: 65537,
+                            keyType: 'rsa',
+                            profile: 'tlsserver',
+                            preferredChain: 'ISRG Root X1',
+                            externalAccountBinding: {},
+                            timeouts: { request: 30000 }
+                        }
+                    })
+            );
+        });
+
+        // Object.assign copies own enumerable properties off a function too, so a function-valued
+        // acme block reaches acmeOptions. Checking only plain objects would let exactly the names
+        // this guards against through, which is the bug one level up.
+        it('should check an acme block the constructor would merge from even when it is not a plain object', () => {
+            const acme = function () {};
+            acme.enviroment = 'typo';
+
+            assert.throws(() => new Certs({ redis, acme }), {
+                code: 'InputValidationError',
+                message: /"acme.enviroment" is not a recognised option/
+            });
+        });
+    });
+
     describe('getKey', () => {
         it('should prefix with namespace', () => {
             const certs = new Certs({ redis, namespace: 'myns' });

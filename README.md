@@ -34,11 +34,11 @@ const certs = new Certs({
     },
 
     // Optional: encrypt private keys before storing in Redis
-    encryptFn: async (value) => {
+    encryptFn: async value => {
         // your encryption logic
         return encryptedValue;
     },
-    decryptFn: async (value) => {
+    decryptFn: async value => {
         // your decryption logic
         return decryptedValue;
     }
@@ -58,7 +58,8 @@ app.get('/.well-known/acme-challenge/:token', (req, res) => {
     certs
         .routeHandler(domain, token)
         .then(challenge => {
-            res.status(200).set('content-type', 'text/plain').send(challenge);
+            // RFC 8555 section 8.3: the key authorization is the whole body, compared byte for byte
+            res.status(200).set('content-type', 'application/octet-stream').send(challenge);
         })
         .catch(err => {
             res.status(err.responseCode || 500).send({
@@ -71,28 +72,30 @@ app.get('/.well-known/acme-challenge/:token', (req, res) => {
 
 ## Constructor Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `redis` | Object | *required* | ioredis (or compatible) client instance |
-| `namespace` | String | `undefined` | Key prefix for Redis storage |
-| `encryptFn` | Function | identity | Async function to encrypt private keys before storage |
-| `decryptFn` | Function | identity | Async function to decrypt private keys after retrieval |
-| `acme.environment` | String | `'development'` | `'development'` (staging) or `'production'` |
-| `acme.directoryUrl` | String | LE staging URL | ACME directory URL |
-| `acme.email` | String | | Subscriber email for the ACME account |
-| `acme.caaDomains` | Array | `['letsencrypt.org']` | Allowed CAA record domains |
-| `acme.keyBits` | Number | `2048` | RSA key size for ACME account key |
-| `acme.keyExponent` | Number | `65537` | RSA public exponent for ACME account key |
-| `acme.keyType` | String | `'rsa'` | Key type for the ACME account key: `'rsa'` or `'ec'` (P-256) |
-| `acme.profile` | String | `undefined` | ACME profile to request, for example `'tlsserver'`. See the CA's `meta.profiles` |
-| `acme.preferredChain` | String | `undefined` | Issuer Common Name to prefer when the CA offers alternate chains |
-| `acme.externalAccountBinding` | Object | `undefined` | Pre-signed EAB JWS, for CAs that require external account binding |
-| `acme.timeouts` | Object | see below | `{ request, validation, order, poll, transportRetry }` in milliseconds |
-| `keyBits` | Number | `2048` | RSA key size for domain certificates |
-| `keyExponent` | Number | `65537` | RSA public exponent for domain certificates |
-| `keyType` | String | `'rsa'` | Key type for domain certificates: `'rsa'` or `'ec'` (P-256) |
-| `logger` | Object | pino instance | Logger (pino-compatible) |
-| `dispatcher` | Object | undici global dispatcher | undici `Dispatcher` (for example a `ProxyAgent`) that every ACME request is sent through |
+| Option                        | Type     | Default                  | Description                                                                              |
+| ----------------------------- | -------- | ------------------------ | ---------------------------------------------------------------------------------------- |
+| `redis`                       | Object   | _required_               | ioredis (or compatible) client instance                                                  |
+| `namespace`                   | String   | `undefined`              | Key prefix for Redis storage                                                             |
+| `encryptFn`                   | Function | identity                 | Async function to encrypt private keys before storage                                    |
+| `decryptFn`                   | Function | identity                 | Async function to decrypt private keys after retrieval                                   |
+| `acme.environment`            | String   | `'development'`          | `'development'` (staging) or `'production'`                                              |
+| `acme.directoryUrl`           | String   | LE staging URL           | ACME directory URL                                                                       |
+| `acme.email`                  | String   |                          | Subscriber email for the ACME account                                                    |
+| `acme.caaDomains`             | Array    | `['letsencrypt.org']`    | Allowed CAA record domains                                                               |
+| `acme.keyBits`                | Number   | `2048`                   | RSA key size for ACME account key                                                        |
+| `acme.keyExponent`            | Number   | `65537`                  | RSA public exponent for ACME account key                                                 |
+| `acme.keyType`                | String   | `'rsa'`                  | Key type for the ACME account key: `'rsa'` or `'ec'` (P-256)                             |
+| `acme.profile`                | String   | `undefined`              | ACME profile to request, for example `'tlsserver'`. See the CA's `meta.profiles`         |
+| `acme.preferredChain`         | String   | `undefined`              | Issuer Common Name to prefer when the CA offers alternate chains                         |
+| `acme.externalAccountBinding` | Object   | `undefined`              | Pre-signed EAB JWS, for CAs that require external account binding                        |
+| `acme.timeouts`               | Object   | see below                | `{ request, validation, order, poll, transportRetry }` in milliseconds                   |
+| `keyBits`                     | Number   | `2048`                   | RSA key size for domain certificates                                                     |
+| `keyExponent`                 | Number   | `65537`                  | RSA public exponent for domain certificates                                              |
+| `keyType`                     | String   | `'rsa'`                  | Key type for domain certificates: `'rsa'` or `'ec'` (P-256)                              |
+| `logger`                      | Object   | pino instance            | Logger (pino-compatible)                                                                 |
+| `dispatcher`                  | Object   | undici global dispatcher | undici `Dispatcher` (for example a `ProxyAgent`) that every ACME request is sent through |
+
+The constructor refuses an option name it does not recognise, and says where a misplaced one belongs. An ACME option passed at the top level rather than inside `acme` has no effect at all - `environment` and `directoryUrl` are the ones worth watching, since an instance that quietly keeps the defaults is one pointed at the Let's Encrypt staging directory, and nothing surfaces that until it first tries to issue. `keyBits`, `keyExponent` and `keyType` are read at both levels and mean different things at each, so both placements are accepted.
 
 Timeouts default to 30 seconds for a single HTTP exchange, two minutes each for waiting on an authorization and on a finalized order, one second between polls when the CA sends no `Retry-After`, and one second before the first retry of a request that failed without producing a response.
 
@@ -125,6 +128,8 @@ Forces certificate acquisition or renewal for the domain. Validates the domain n
 ### `routeHandler(domain, token)`
 
 Resolves an ACME HTTP-01 challenge. Use this as the handler for `GET /.well-known/acme-challenge/:token` requests. Returns the `keyAuthorization` string on success or throws with a `responseCode` property on failure.
+
+Send the returned string as the entire response body, with `content-type: application/octet-stream` (RFC 8555 section 8.3). The CA compares the body byte for byte, so anything wrapped around it fails validation. `responseCode` is the HTTP status to answer with - 400 for a malformed request, 404 for a token with no pending challenge, 500 when the lookup itself failed - and it is the only status this throws; there is no `statusCode`.
 
 ### `refreshRenewalInfo(domain, certificateData?)`
 

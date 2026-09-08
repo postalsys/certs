@@ -60,10 +60,12 @@ app.get('/.well-known/acme-challenge/:token', (req, res) => {
     certs
         .routeHandler(domain, token)
         .then(challenge => {
-            res.status(200).set('content-type', 'text/plain').send(challenge);
+            // RFC 8555 section 8.3: the key authorization is the whole body, compared byte for byte
+            res.status(200).set('content-type', 'application/octet-stream').send(challenge);
         })
         .catch(err => {
-            res.status(err.statusCode || 500).send({
+            // routeHandler() reports the status as responseCode; it never sets statusCode
+            res.status(err.responseCode || 500).send({
                 error: err.message,
                 code: err.code,
                 details: err.details
