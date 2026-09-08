@@ -5,10 +5,11 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { AcmeClient, AcmeError, parseRetryAfter, parseLinks, splitPemChain, MAX_POLL_RETRY_AFTER, MAX_RENEWAL_INFO_RETRY_AFTER } = require('../lib/acme-client');
 const { createMockAcmeServer } = require('./helpers/mock-acme-server');
-const { rsaKey, ecKey, freshEcKey } = require('./helpers/keys');
+const { rsaKey, ecKey, freshEcKey, freshRsaKey } = require('./helpers/keys');
 
-// The mock answers instantly, so the poll interval only has to be non-zero.
-const TEST_TIMEOUTS = { validation: 5000, order: 5000, poll: 1 };
+// The mock answers instantly, so the poll interval only has to be non-zero. A transport retry that
+// waited its real second would dominate the runtime of the whole suite.
+const TEST_TIMEOUTS = { validation: 5000, order: 5000, poll: 1, transportRetry: 1 };
 
 // A challenge handler backed by a Map, standing in for the Redis-backed one.
 function createChallengeStore() {
@@ -24,7 +25,10 @@ function createChallengeStore() {
     };
 }
 
-async function issueOnce(serverOptions = {}, certificateOptions = {}) {
+// Runs one order end to end against the mock CA. `rewriteCertificate(server)`, when given, replaces
+// the PEM the CA serves at the certificate URL, which is how the checks on an issued certificate are
+// exercised without a second copy of this function.
+async function issueOnce(serverOptions = {}, certificateOptions = {}, rewriteCertificate = null) {
     const store = createChallengeStore();
     const server = createMockAcmeServer(Object.assign({ resolveChallenge: store.resolve }, serverOptions));
     // No real delay between polls: the point is the sequence, not the wait.
@@ -32,6 +36,14 @@ async function issueOnce(serverOptions = {}, certificateOptions = {}) {
 
     const accountKey = ecKey();
     const { kid } = await client.createAccount({ key: accountKey, email: 'acme@example.com' });
+
+    if (rewriteCertificate) {
+        interceptResponses(client, server, (opts, response) => {
+            if (/\/cert\//.test(opts.url) && typeof response.body === 'string') {
+                response.body = rewriteCertificate(server);
+            }
+        });
+    }
 
     const options = Object.assign(
         {
@@ -46,6 +58,16 @@ async function issueOnce(serverOptions = {}, certificateOptions = {}) {
     const result = await client.createCertificate(options);
 
     return { server, client, store, result, accountKey, certificateKey: options.certificateKey, kid };
+}
+
+// Lets a test tamper with what the mock CA answered, to stand in for a CA that misbehaves.
+function interceptResponses(client, server, rewrite) {
+    const inner = server.request;
+    client.request = async opts => {
+        const response = await inner(opts);
+        rewrite(opts, response);
+        return response;
+    };
 }
 
 describe('AcmeClient', () => {
@@ -84,6 +106,9 @@ describe('AcmeClient', () => {
             let attempts = 0;
             const client = new AcmeClient({
                 directoryUrl: 'https://acme.test/directory',
+                // The transport retry is off so that this stays a test about caching: with it on,
+                // the first init() would succeed on the retry and never reject at all.
+                maxTransportRetries: 0,
                 request: async () => {
                     attempts++;
                     if (attempts === 1) {
@@ -139,6 +164,61 @@ describe('AcmeClient', () => {
                 });
             });
         }
+
+        // The request function is a caller-supplied extension point, and an error response is
+        // exactly where one is most likely to leave the headers out. Reading Retry-After off it
+        // unguarded turned the AcmeError into a TypeError.
+        it('should raise an AcmeError when the request function omits the headers on an error', async () => {
+            const client = new AcmeClient({
+                directoryUrl: 'https://acme.test/directory',
+                request: async () => ({ statusCode: 429, body: { type: 'urn:ietf:params:acme:error:rateLimited', detail: 'slow down' } })
+            });
+
+            await assert.rejects(client.init(), err => {
+                assert.ok(err instanceof AcmeError);
+                assert.equal(err.statusCode, 429);
+                assert.equal(err.detail, 'slow down');
+                assert.equal(err.retryAfter, null);
+                return true;
+            });
+        });
+
+        // Every signed request is bound to its own url by the JWS protected header, so a CA that
+        // points somewhere else is either misconfigured or relaying. lib/acme-request.js stops fetch
+        // from following the redirect; this is where it becomes an error.
+        it('should raise on a redirect rather than treating it as a response', async () => {
+            let attempts = 0;
+            const client = new AcmeClient({
+                directoryUrl: 'https://acme.test/directory',
+                timeouts: TEST_TIMEOUTS,
+                request: async () => {
+                    attempts++;
+                    return { statusCode: 307, headers: { location: 'https://elsewhere.test/directory', 'replay-nonce': 'nonce-from-elsewhere' }, body: '' };
+                }
+            });
+
+            await assert.rejects(client.init(), err => {
+                assert.ok(err instanceof AcmeError);
+                assert.equal(err.statusCode, 307);
+                assert.match(err.message, /redirected/);
+                assert.match(err.message, /elsewhere\.test/);
+                return true;
+            });
+
+            // deterministic, so it is not worth a second request
+            assert.equal(attempts, 1);
+            // and nothing an origin the CA merely pointed at said is kept
+            assert.deepEqual(client.nonces, []);
+        });
+
+        it('should name an unnamed redirect target', async () => {
+            const client = new AcmeClient({
+                directoryUrl: 'https://acme.test/directory',
+                request: async () => ({ statusCode: 302, headers: {}, body: '' })
+            });
+
+            await assert.rejects(client.init(), /an unnamed location/);
+        });
 
         it('should raise on an error status with a body that is not a problem document', async () => {
             const client = new AcmeClient({
@@ -444,6 +524,129 @@ describe('AcmeClient', () => {
             // one attempt only
             assert.equal(server.state.requests.filter(entry => entry.path === '/new-account').length, 1);
         });
+
+        // A connection that never produced a response is not an ACME condition, and used to abort
+        // the whole order. One reset connection then blocked the domain from renewing for an hour.
+        it('should retry a request that failed without producing a response', async () => {
+            const store = createChallengeStore();
+            const server = createMockAcmeServer({ resolveChallenge: store.resolve });
+
+            let failures = 0;
+            const flaky = async opts => {
+                if (/\/new-order$/.test(opts.url) && failures < 2) {
+                    failures++;
+                    const err = new Error('socket hang up');
+                    err.code = 'ECONNRESET';
+                    throw err;
+                }
+                return server.request(opts);
+            };
+
+            const client = new AcmeClient({ directoryUrl: server.directoryUrl, request: flaky, maxTransportRetries: 2, timeouts: TEST_TIMEOUTS });
+            const accountKey = ecKey();
+            const { kid } = await client.createAccount({ key: accountKey });
+
+            const result = await client.createCertificate({
+                accountKey,
+                kid,
+                certificateKey: rsaKey(),
+                domains: ['example.com'],
+                challenges: { 'http-01': store.handler }
+            });
+
+            assert.equal(failures, 2);
+            assert.ok(result.cert);
+        });
+
+        it('should retry a transport failure once by default', async () => {
+            let attempts = 0;
+            const client = new AcmeClient({
+                directoryUrl: 'https://acme.test/directory',
+                timeouts: TEST_TIMEOUTS,
+                request: async () => {
+                    attempts++;
+                    throw new Error('network down');
+                }
+            });
+
+            // One retry, not more: each one costs another whole request timeout, and two would let
+            // a single exchange outlast the order deadline pollResource is counting down.
+            await assert.rejects(client.init(), /network down/);
+            assert.equal(attempts, 2);
+        });
+
+        // A body over the cap and a redirect are settled answers, not connections that faltered.
+        it('should not retry a failure the request function marked as settled', async () => {
+            let attempts = 0;
+            const client = new AcmeClient({
+                directoryUrl: 'https://acme.test/directory',
+                timeouts: TEST_TIMEOUTS,
+                request: async () => {
+                    attempts++;
+                    const err = new Error('ACME response is larger than 524288 bytes');
+                    err.code = 'AcmeResponseTooLarge';
+                    err.retryable = false;
+                    throw err;
+                }
+            });
+
+            await assert.rejects(client.init(), /larger than/);
+            assert.equal(attempts, 1);
+        });
+
+        it('should give up on a transport failure after the transport retry budget', async () => {
+            let attempts = 0;
+            const client = new AcmeClient({
+                directoryUrl: 'https://acme.test/directory',
+                maxTransportRetries: 2,
+                timeouts: TEST_TIMEOUTS,
+                request: async () => {
+                    attempts++;
+                    throw new Error('network down');
+                }
+            });
+
+            await assert.rejects(client.init(), /network down/);
+            // the first attempt plus its two retries
+            assert.equal(attempts, 3);
+        });
+
+        it('should allow the transport retry to be turned off', async () => {
+            let attempts = 0;
+            const client = new AcmeClient({
+                directoryUrl: 'https://acme.test/directory',
+                maxTransportRetries: 0,
+                request: async () => {
+                    attempts++;
+                    throw new Error('network down');
+                }
+            });
+
+            await assert.rejects(client.init(), /network down/);
+            assert.equal(attempts, 1);
+        });
+
+        it('should not retry a transport failure as though it were a stale nonce', async () => {
+            // the signed-request retry budget must not multiply with the transport one
+            let attempts = 0;
+            const server = createMockAcmeServer();
+            const client = new AcmeClient({
+                directoryUrl: server.directoryUrl,
+                maxRetries: 3,
+                maxTransportRetries: 1,
+                timeouts: TEST_TIMEOUTS,
+                request: async opts => {
+                    if (/\/new-account$/.test(opts.url)) {
+                        attempts++;
+                        throw new Error('network down');
+                    }
+                    return server.request(opts);
+                }
+            });
+
+            await assert.rejects(client.createAccount({ key: ecKey() }), /network down/);
+            assert.equal(attempts, 2);
+        });
     });
 
     describe('alternate chains', () => {
@@ -521,8 +724,8 @@ describe('acme-client helpers', () => {
             assert.ok(value >= 3000 && value <= 6000);
         });
 
-        it('should treat a past date as no delay', () => {
-            assert.equal(parseRetryAfter(new Date(Date.now() - 60000).toUTCString(), MAX_POLL_RETRY_AFTER), 0);
+        it('should treat a past date as no usable delay', () => {
+            assert.equal(parseRetryAfter(new Date(Date.now() - 60000).toUTCString(), MAX_POLL_RETRY_AFTER), null);
         });
 
         it('should clamp to the bound it was given', () => {
@@ -536,8 +739,12 @@ describe('acme-client helpers', () => {
             assert.equal(parseRetryAfter('soon', MAX_POLL_RETRY_AFTER), null);
         });
 
-        it('should treat zero as no delay', () => {
-            assert.equal(parseRetryAfter('0', MAX_POLL_RETRY_AFTER), 0);
+        // Zero has to come back as null rather than as a delay of zero: a caller that takes it
+        // literally retries with no pause, so a rate limit carrying `Retry-After: 0` spins through
+        // the whole retry budget in one go.
+        it('should treat zero and a negative value as no usable delay', () => {
+            assert.equal(parseRetryAfter('0', MAX_POLL_RETRY_AFTER), null);
+            assert.equal(parseRetryAfter('-5', MAX_POLL_RETRY_AFTER), null);
         });
     });
 
@@ -555,6 +762,20 @@ describe('acme-client helpers', () => {
         it('should return nothing for a missing header', () => {
             assert.deepEqual(parseLinks(undefined, 'alternate'), []);
             assert.deepEqual(parseLinks('<https://acme.test/a>;rel="index"', 'alternate'), []);
+        });
+
+        // RFC 8288 allows a comma inside a quoted parameter, so the parameter list of a link cannot
+        // be read up to the next comma. Splitting there dropped the rel and lost the link.
+        it('should not end a link at a comma inside a quoted parameter', () => {
+            assert.deepEqual(parseLinks('<https://acme.test/a>; title="x,y"; rel="alternate"', 'alternate'), ['https://acme.test/a']);
+            assert.deepEqual(parseLinks('<https://acme.test/a>; rel="alternate", <https://acme.test/b>; title="p,q"; rel="alternate"', 'alternate'), [
+                'https://acme.test/a',
+                'https://acme.test/b'
+            ]);
+        });
+
+        it('should handle an escaped quote inside a parameter', () => {
+            assert.deepEqual(parseLinks('<https://acme.test/a>; title="say \\"hi\\", now"; rel="alternate"', 'alternate'), ['https://acme.test/a']);
         });
     });
 
@@ -688,14 +909,11 @@ describe('AcmeClient identifier binding', () => {
 
         // A CA that answers with an authorization for someone else's name would otherwise have the
         // client publish a key authorization on that name's behalf.
-        const inner = server.request;
-        client.request = async opts => {
-            const response = await inner(opts);
+        interceptResponses(client, server, (opts, response) => {
             if (/\/authz\//.test(opts.url) && response.body && response.body.identifier) {
                 response.body = Object.assign({}, response.body, { identifier: { type: 'dns', value: 'victim.example.com' } });
             }
-            return response;
-        };
+        });
 
         await assert.rejects(
             client.createCertificate({
@@ -709,5 +927,57 @@ describe('AcmeClient identifier binding', () => {
         );
 
         assert.equal(store.tokens.size, 0, 'nothing was published for the substituted name');
+    });
+});
+
+// The CA is a trusted party, so these checks are not a defence against a hostile one. They are here
+// because a certificate that does not match the order is stored and then served to TLS clients
+// verbatim, where the failure surfaces as a browser error a long way from the response that caused
+// it.
+describe('AcmeClient issued certificate validation', () => {
+    it('should accept a certificate that covers every requested domain', async () => {
+        const { result, certificateKey } = await issueOnce({}, { domains: ['example.com', 'www.example.com'] });
+        const leaf = new crypto.X509Certificate(result.cert);
+
+        assert.ok(leaf.checkPrivateKey(certificateKey));
+        assert.match(leaf.subjectAltName, /DNS:example\.com/);
+        assert.match(leaf.subjectAltName, /DNS:www\.example\.com/);
+    });
+
+    it('should reject a certificate that does not cover a requested domain', async () => {
+        await assert.rejects(
+            issueOnce(
+                {},
+                { domains: ['example.com', 'www.example.com'] },
+                server => server.ca.issue({ publicKey: crypto.createPublicKey(rsaKey()), domains: ['example.com'] }).pem
+            ),
+            /does not cover www\.example\.com/
+        );
+    });
+
+    it('should reject a certificate issued to a different key', async () => {
+        await assert.rejects(
+            issueOnce({}, {}, server => server.ca.issue({ publicKey: crypto.createPublicKey(freshRsaKey()), domains: ['example.com'] }).pem),
+            /for a different key than the one that was requested/
+        );
+    });
+
+    it('should reject a certificate that cannot be parsed', async () => {
+        await assert.rejects(
+            issueOnce({}, {}, () => '-----BEGIN CERTIFICATE-----\nbm90IGEgY2VydGlmaWNhdGU=\n-----END CERTIFICATE-----\n'),
+            /could not be parsed/
+        );
+    });
+});
+
+describe('AcmeClient domain case handling', () => {
+    // punycode.toASCII leaves an ASCII name exactly as it found it, and Boulder lower-cases the
+    // identifiers it echoes back, so a mixed-case domain used to fail its own authorization check.
+    it('should order a mixed-case domain and match the identifier the CA returns', async () => {
+        const { result } = await issueOnce({}, { domains: ['Example.COM', 'WWW.Example.com'] });
+        const leaf = new crypto.X509Certificate(result.cert);
+
+        assert.match(leaf.subjectAltName, /DNS:example\.com/);
+        assert.match(leaf.subjectAltName, /DNS:www\.example\.com/);
     });
 });

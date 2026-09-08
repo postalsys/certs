@@ -315,7 +315,14 @@ function createMockAcmeServer(options = {}) {
             const orderId = nextId('o');
             const authorizationIds = [];
 
-            for (const identifier of verified.payload.identifiers) {
+            // Boulder lower-cases the identifiers it stores, so the authorizations and the order it
+            // echoes back never carry the case the client sent. A client that compares an
+            // authorization against what it asked for has to account for that.
+            const identifiers = verified.payload.identifiers.map(identifier =>
+                Object.assign({}, identifier, { value: String(identifier.value || '').toLowerCase() })
+            );
+
+            for (const identifier of identifiers) {
                 const authorizationId = nextId('z');
                 const challengeId = nextId('c');
                 const token = crypto.randomBytes(16).toString('base64url');
@@ -340,7 +347,7 @@ function createMockAcmeServer(options = {}) {
 
             state.orders.set(orderId, {
                 status: 'pending',
-                identifiers: verified.payload.identifiers,
+                identifiers,
                 authorizationIds,
                 expires: new Date(Date.now() + 3600 * 1000).toISOString(),
                 profile: verified.payload.profile,

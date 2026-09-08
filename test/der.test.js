@@ -118,6 +118,19 @@ describe('der', () => {
             assert.deepEqual(subjectAltNamesOf(csr), [long]);
         });
 
+        // A dNSName is IA5String and Buffer.from(.., 'ascii') would take the low byte of every
+        // character, so a name that reached here in Unicode became a silently wrong request rather
+        // than an error.
+        it('should refuse a domain that is not in its A-label form', () => {
+            assert.throws(() => createCsr(rsaKey(), ['t\u00ebst.com']), /must be converted to its A-label form/);
+            assert.throws(() => createCsr(rsaKey(), ['example.com', '\u4f8b.jp']), /must be converted to its A-label form/);
+        });
+
+        it('should accept the A-label of an internationalized domain', () => {
+            const csr = createCsr(rsaKey(), ['xn--tst-jma.com']);
+            assert.deepEqual(subjectAltNamesOf(csr), ['xn--tst-jma.com']);
+        });
+
         it('should sign with the key, verifiably', () => {
             const key = rsaKey();
             const csr = createCsr(key, ['example.com']);

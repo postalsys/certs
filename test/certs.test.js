@@ -345,20 +345,57 @@ describe('Certs acquisition', () => {
 
     // ioredfour needs a real Redis, so the lock is stubbed and its use asserted directly. That is
     // also the point: an early return that skips the release used to leak the lock for ten minutes.
+    // Two different locks are taken during an acquisition: the per-domain operation lock, and the
+    // environment-wide one that keeps two first-time orders from each registering an account. The
+    // keys are recorded so a test about one does not move when the other changes.
     function stubLocking(certs) {
-        const calls = { acquired: 0, released: 0 };
+        const calls = {
+            acquired: [],
+            released: [],
+            count(list, kind) {
+                return calls[list].filter(key => key === certs.getKey(kind)).length;
+            }
+        };
+
         certs.locking = {
-            async waitAcquireLock() {
-                calls.acquired++;
-                return { success: true, id: 'lock-1' };
+            async waitAcquireLock(key) {
+                calls.acquired.push(key);
+                return { success: true, key };
             },
-            async releaseLock() {
-                calls.released++;
+            async releaseLock(lock) {
+                calls.released.push(lock && lock.key);
                 return true;
             }
         };
+
         return calls;
     }
+
+    // A lock that really serializes, for the tests that are about two callers meeting on one.
+    function serializingLocking() {
+        const queues = new Map();
+        return {
+            async waitAcquireLock(key) {
+                const previous = queues.get(key) || Promise.resolve();
+                let release;
+                const current = new Promise(resolve => {
+                    release = resolve;
+                });
+                // `current` cannot resolve before `previous` has, so queueing it alone is enough
+                // to keep the waiters in order.
+                queues.set(key, current);
+                await previous;
+                return { success: true, key, release };
+            },
+            async releaseLock(lock) {
+                lock.release();
+                return true;
+            }
+        };
+    }
+
+    const OP_LOCK = 'lock:op:example.com';
+    const ACCOUNT_LOCK = 'lock:account:test';
 
     function connect(certs, serverOptions = {}) {
         const tokens = new Map();
@@ -366,8 +403,9 @@ describe('Certs acquisition', () => {
         certs.acme = new AcmeClient({
             directoryUrl: server.directoryUrl,
             request: server.request,
-            // The mock answers instantly; a real poll interval would only make the suite slow.
-            timeouts: { validation: 5000, order: 5000, poll: 1 }
+            // The mock answers instantly; a real poll interval, or a real transport retry delay,
+            // would only make the suite slow.
+            timeouts: { validation: 5000, order: 5000, poll: 1, transportRetry: 1 }
         });
         // Mirror the Redis-backed challenge store into a Map the mock CA can read.
         const originalSet = certs.acmeChallenge.set.bind(certs.acmeChallenge);
@@ -448,8 +486,8 @@ describe('Certs acquisition', () => {
 
             await certs.acquireCert('example.com');
 
-            assert.equal(calls.acquired, 1);
-            assert.equal(calls.released, 1);
+            assert.equal(calls.count('acquired', OP_LOCK), 1);
+            assert.equal(calls.count('released', OP_LOCK), 1);
         });
 
         it('should release the lock when the certificate was renewed while waiting for it', async () => {
@@ -458,14 +496,14 @@ describe('Certs acquisition', () => {
             const calls = stubLocking(certs);
 
             await certs.acquireCert('example.com');
-            assert.equal(calls.released, 1);
+            assert.equal(calls.count('released', OP_LOCK), 1);
 
             // Second call finds a fresh certificate once it holds the lock and returns early. That
             // early return used to skip the release entirely.
             const data = await certs.acquireCert('example.com');
 
-            assert.equal(calls.acquired, 2);
-            assert.equal(calls.released, 2);
+            assert.equal(calls.count('acquired', OP_LOCK), 2);
+            assert.equal(calls.count('released', OP_LOCK), 2);
             assert.equal(data.status, 'valid');
         });
 
@@ -506,7 +544,7 @@ describe('Certs acquisition', () => {
 
             await assert.rejects(certs.acquireCert('example.com'));
 
-            assert.equal(calls.released, 1);
+            assert.equal(calls.count('released', OP_LOCK), 1);
         });
 
         it('should record the failure and block retries for an hour', async () => {
@@ -521,6 +559,30 @@ describe('Certs acquisition', () => {
             assert.ok(data.lastError.err);
             assert.equal(data.lastError.type, 'urn:ietf:params:acme:error:unauthorized');
             assert.equal(await redis.exists(certs.getKey('lock:safe:example.com')), 1);
+            assert.equal(await redis.ttl(certs.getKey('lock:safe:example.com')), 3600);
+        });
+
+        // A failure that never became an answer from the CA carries no judgement about the domain
+        // and no rate limit to respect. Blocking it for the full hour meant one reset connection
+        // stopped a domain from renewing for an hour.
+        it('should block only briefly when the failure never reached the CA', async () => {
+            const certs = newCerts(redis);
+            connect(certs);
+            stubLocking(certs);
+
+            certs.acme.request = async () => {
+                const err = new Error('socket hang up');
+                err.code = 'ECONNRESET';
+                throw err;
+            };
+
+            await assert.rejects(certs.acquireCert('example.com'), /socket hang up/);
+
+            assert.equal(await redis.exists(certs.getKey('lock:safe:example.com')), 1);
+            assert.equal(await redis.ttl(certs.getKey('lock:safe:example.com')), 60);
+
+            const data = await certs.loadCertificateData('example.com');
+            assert.equal(data.lastError.code, 'ECONNRESET');
         });
 
         it('should not attempt a renewal while the failsafe lock is held', async () => {
@@ -607,6 +669,59 @@ describe('Certs acquisition', () => {
 
             assert.equal(recovered.kid, created.kid);
             assert.equal((await certs.settings.get('account:test')).account.key.kid, created.kid);
+        });
+
+        // Provisioning is not covered by the per-domain lock, so two first-time orders for two
+        // different domains used to each generate a key and register an account. The second write
+        // won and the first registration was orphaned at the CA with no stored key to reach it by.
+        it('should register one account when two callers provision at the same time', async () => {
+            const certs = newCerts(redis);
+            const { server } = connect(certs);
+            certs.locking = serializingLocking();
+
+            const [first, second] = await Promise.all([certs.getAcmeAccount(), certs.getAcmeAccount()]);
+
+            assert.equal(first.kid, second.kid);
+            assert.equal(server.state.requests.filter(entry => entry.path === '/new-account').length, 1);
+            assert.equal((await certs.settings.get('account:test')).account.key.kid, first.kid);
+        });
+
+        it('should take the account lock for its environment', async () => {
+            const certs = newCerts(redis);
+            connect(certs);
+            const calls = stubLocking(certs);
+
+            await certs.getAcmeAccount();
+
+            assert.equal(calls.count('acquired', ACCOUNT_LOCK), 1);
+            assert.equal(calls.count('released', ACCOUNT_LOCK), 1);
+        });
+
+        it('should not take the account lock when an account is already stored', async () => {
+            const certs = newCerts(redis);
+            connect(certs);
+            await certs.getAcmeAccount();
+
+            const calls = stubLocking(certs);
+            await certs.getAcmeAccount();
+
+            assert.equal(calls.count('acquired', ACCOUNT_LOCK), 0);
+        });
+
+        it('should still provision when the lock cannot be taken', async () => {
+            const certs = newCerts(redis);
+            connect(certs);
+            certs.locking = {
+                async waitAcquireLock() {
+                    return { success: false };
+                },
+                async releaseLock() {
+                    throw new Error('released a lock that was never held');
+                }
+            };
+
+            const account = await certs.getAcmeAccount();
+            assert.ok(account.kid);
         });
 
         it('should encrypt the account key at rest', async () => {
@@ -783,7 +898,11 @@ describe('Certs storage isolation', () => {
         const certs = new Certs({ redis, acme: { environment: 'test', caaDomains: [] }, logger: silent });
         const tokens = new Map();
         const server = createMockAcmeServer(Object.assign({ resolveChallenge: (d, token) => tokens.get(token) || null }, serverOptions));
-        certs.acme = new AcmeClient({ directoryUrl: server.directoryUrl, request: server.request, timeouts: { validation: 5000, order: 5000, poll: 1 } });
+        certs.acme = new AcmeClient({
+            directoryUrl: server.directoryUrl,
+            request: server.request,
+            timeouts: { validation: 5000, order: 5000, poll: 1, transportRetry: 1 }
+        });
 
         const originalSet = certs.acmeChallenge.set.bind(certs.acmeChallenge);
         certs.acmeChallenge.set = async opts => {

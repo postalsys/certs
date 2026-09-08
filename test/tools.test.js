@@ -375,4 +375,18 @@ describe('normalizeDomain with A-labels', () => {
             assert.equal(normalizeDomain(toAsciiDomain(domain)), domain);
         }
     });
+
+    // punycode.toASCII leaves an all-ASCII name exactly as it found it, and a CA echoes identifiers
+    // back lower-cased, so a name that skipped normalizeDomain used to go on the wire mixed-case
+    // and then fail to match the authorization it had just asked for.
+    it('should lower-case what goes on the wire', () => {
+        assert.equal(toAsciiDomain('Example.COM'), 'example.com');
+        assert.equal(toAsciiDomain('  WWW.Example.com  '), 'www.example.com');
+        assert.equal(toAsciiDomain('TËST.com'), 'xn--tst-jma.com');
+    });
+
+    it('should return an empty string for a missing domain', () => {
+        assert.equal(toAsciiDomain(), '');
+        assert.equal(toAsciiDomain(''), '');
+    });
 });

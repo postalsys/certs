@@ -87,18 +87,24 @@ app.get('/.well-known/acme-challenge/:token', (req, res) => {
 | `acme.profile` | String | `undefined` | ACME profile to request, for example `'tlsserver'`. See the CA's `meta.profiles` |
 | `acme.preferredChain` | String | `undefined` | Issuer Common Name to prefer when the CA offers alternate chains |
 | `acme.externalAccountBinding` | Object | `undefined` | Pre-signed EAB JWS, for CAs that require external account binding |
-| `acme.timeouts` | Object | see below | `{ request, validation, order, poll }` in milliseconds |
+| `acme.timeouts` | Object | see below | `{ request, validation, order, poll, transportRetry }` in milliseconds |
 | `keyBits` | Number | `2048` | RSA key size for domain certificates |
 | `keyExponent` | Number | `65537` | RSA public exponent for domain certificates |
 | `keyType` | String | `'rsa'` | Key type for domain certificates: `'rsa'` or `'ec'` (P-256) |
 | `logger` | Object | pino instance | Logger (pino-compatible) |
 | `dispatcher` | Object | undici global dispatcher | undici `Dispatcher` (for example a `ProxyAgent`) that every ACME request is sent through |
 
-Timeouts default to 30 seconds for a single HTTP exchange, two minutes each for waiting on an authorization and on a finalized order, and one second between polls when the CA sends no `Retry-After`.
+Timeouts default to 30 seconds for a single HTTP exchange, two minutes each for waiting on an authorization and on a finalized order, one second between polls when the CA sends no `Retry-After`, and one second before the first retry of a request that failed without producing a response.
 
 Domains are held in their Unicode spelling throughout, including as Redis keys and in `routeHandler()`. Internationalized names are converted to A-labels only where the protocol requires it, in the order identifiers and in the certificate signing request.
 
 RSA is the default key type on both counts because these certificates terminate TLS for IMAP and SMTP clients as well as browsers. Set `keyType: 'ec'` where every client is known to support P-256.
+
+### Encryption at rest
+
+`encryptFn` and `decryptFn` default to the identity function, so **out of the box every private key this library stores is written to Redis in the clear** - the ACME account key as well as each domain's certificate key.
+
+The account key is the more valuable of the two. A CA caches an account's completed authorizations, so whoever holds that key can have certificates issued for every domain the account has already validated, without passing another challenge. Supply `encryptFn`/`decryptFn` in any deployment where the Redis instance is shared, replicated, backed up, or reachable by anything but this process.
 
 ## API
 

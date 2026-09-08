@@ -4,6 +4,9 @@ function createMockRedis() {
     const hashes = new Map();
     const keys = new Map();
     const sets = new Map();
+    // Recorded rather than enforced: nothing here expires on its own, but a test needs to be able
+    // to tell how long a failsafe lock was armed for, not just that it was.
+    const ttls = new Map();
 
     function getHash(key) {
         if (!hashes.has(key)) {
@@ -32,7 +35,7 @@ function createMockRedis() {
                 return chain;
             },
             expire(key, ttl) {
-                commands.push(() => ttl);
+                commands.push(() => redis.expire(key, ttl));
                 return chain;
             },
             hdel(key, ...fields) {
@@ -124,7 +127,18 @@ function createMockRedis() {
             return keys.get(key) || null;
         },
 
+        async expire(key, ttl) {
+            ttls.set(key, ttl);
+            return 1;
+        },
+
+        // Seconds the key was given, or -1 when it was never given any.
+        async ttl(key) {
+            return ttls.has(key) ? ttls.get(key) : -1;
+        },
+
         async del(key) {
+            ttls.delete(key);
             return keys.delete(key) ? 1 : 0;
         },
 

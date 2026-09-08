@@ -4,7 +4,7 @@ const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { Agent } = require('undici');
-const { createAcmeRequest } = require('../lib/acme-request');
+const { createAcmeRequest, MAX_RESPONSE_SIZE } = require('../lib/acme-request');
 
 const PEM_CHAIN = '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n';
 
@@ -51,6 +51,18 @@ describe('createAcmeRequest', () => {
                     case '/nonce':
                         res.writeHead(200, { 'Replay-Nonce': 'nonce-2' });
                         res.end();
+                        return;
+                    case '/redirect':
+                        res.writeHead(307, { Location: `${baseUrl}/directory`, 'Replay-Nonce': 'nonce-redirect' });
+                        res.end();
+                        return;
+                    case '/oversized':
+                        res.writeHead(200, { 'Content-Type': 'application/json' });
+                        res.end('x'.repeat(MAX_RESPONSE_SIZE + 1024));
+                        return;
+                    case '/at-the-limit':
+                        res.writeHead(200, { 'Content-Type': 'text/plain' });
+                        res.end('y'.repeat(MAX_RESPONSE_SIZE));
                         return;
                     default:
                         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -142,6 +154,41 @@ describe('createAcmeRequest', () => {
             stalled.closeAllConnections();
             await new Promise(resolve => stalled.close(resolve));
         }
+    });
+
+    // A signed ACME POST carries a JWS that proves possession of the account key and names the
+    // account URL. Following a redirect would re-send it live to another origin, so the 3xx is
+    // handed back as the response it is and the client refuses it.
+    it('does not follow a redirect, so a signed body is never re-sent to another origin', async () => {
+        const request = createAcmeRequest();
+        const resp = await request({ url: `${baseUrl}/redirect`, method: 'POST', body: '{}' });
+
+        assert.equal(resp.statusCode, 307);
+        assert.equal(resp.headers.location, `${baseUrl}/directory`);
+
+        // the redirect target was never asked for
+        assert.equal(requests.length, 1);
+        assert.equal(requests[0].url, '/redirect');
+    });
+
+    it('rejects a response body larger than the cap instead of buffering it', async () => {
+        const request = createAcmeRequest();
+
+        await assert.rejects(request({ url: `${baseUrl}/oversized` }), err => {
+            assert.equal(err.code, 'AcmeResponseTooLarge');
+            assert.match(err.message, new RegExp(`${MAX_RESPONSE_SIZE}`));
+            // A settled answer, not a connection that faltered: the client must not retry it.
+            assert.equal(err.retryable, false);
+            return true;
+        });
+    });
+
+    it('accepts a body right at the cap', async () => {
+        const request = createAcmeRequest();
+        const resp = await request({ url: `${baseUrl}/at-the-limit` });
+
+        assert.equal(resp.statusCode, 200);
+        assert.equal(resp.body.length, MAX_RESPONSE_SIZE);
     });
 
     it('sends the request through the given dispatcher', async () => {

@@ -81,6 +81,49 @@ describe('Settings', () => {
         });
     });
 
+    describe('a value that will not decode', () => {
+        // Treating it as absent is the right recovery - for a certificate record it means the
+        // domain is ordered again - but doing it silently left an operator with a renewal that
+        // kept happening and nothing naming the record that caused it.
+        it('should log the key and treat the value as absent', async () => {
+            const logged = [];
+            const logger = Settings.create({ redis, namespace: 'test', logger: { error: entry => logged.push(entry) } });
+
+            await redis.hmset('test:certs:settings', { broken: Buffer.from([0xc1]) });
+
+            assert.equal(await logger.get('broken'), undefined);
+            assert.equal(logged.length, 1);
+            assert.equal(logged[0].key, 'broken');
+            assert.ok(logged[0].err);
+        });
+
+        // A field that does not exist reads back as null, which throws in the decoder. Logging that
+        // would put an error line in the operator's log for every field of every domain that has no
+        // certificate yet, which is the ordinary cold-start case.
+        it('should say nothing about a key that was simply never set', async () => {
+            const logged = [];
+            const watched = Settings.create({ redis, namespace: 'test', logger: { error: entry => logged.push(entry) } });
+
+            assert.equal(await watched.get('never-set'), undefined);
+
+            const many = await watched.get(['never-set', 'nor-this', 'nor-that']);
+            assert.deepEqual(many, {});
+            assert.deepEqual(logged, []);
+        });
+
+        it('should keep reading the keys either side of it', async () => {
+            const quiet = Settings.create({ redis, namespace: 'test', logger: { error: () => false } });
+
+            await quiet.set({ before: 'a', after: 'b' });
+            await redis.hmset('test:certs:settings', { broken: Buffer.from([0xc1]) });
+
+            const result = await quiet.get(['before', 'broken', 'after']);
+            assert.equal(result.before, 'a');
+            assert.equal(result.broken, undefined);
+            assert.equal(result.after, 'b');
+        });
+    });
+
     describe('delete', () => {
         it('should delete existing keys', async () => {
             await settings.set('todelete', 'value');
