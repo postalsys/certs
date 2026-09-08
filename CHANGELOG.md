@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/postalsys/certs/compare/v1.2.0...v1.2.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* act on the security and correctness review of the in-house ACME client ([e6f1371](https://github.com/postalsys/certs/commit/e6f1371c34e0b71989284d7c2f0f9784fdc33ddd))
+
 ## [1.2.0](https://github.com/postalsys/certs/compare/v1.1.1...v1.2.0) (2026-09-08)
 
 
