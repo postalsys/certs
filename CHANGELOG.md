@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/postalsys/certs/compare/v1.3.0...v1.4.0) (2026-09-09)
+
+
+### Features
+
+* say whether this call failed to renew, not only what the record last recorded ([37b1344](https://github.com/postalsys/certs/commit/37b13446891cb5c8dd93b5f050e39b6e3e20b76c))
+
 ## [1.3.0](https://github.com/postalsys/certs/compare/v1.2.1...v1.3.0) (2026-09-08)
 
 
