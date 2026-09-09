@@ -710,6 +710,101 @@ describe('Certs acquisition', () => {
             assert.equal(second.status, 'valid');
             // and the caller is told why the renewal did not happen
             assert.ok(second.lastError.err);
+            assert.equal(second.renewalError.err, second.lastError.err);
+        });
+
+        it('should not report a renewal error for a certificate that did not need renewing', async () => {
+            // The reason renewalError exists. A stored lastError outlives the failure it names, and
+            // this path answers from the stored record without attempting anything, so a caller
+            // reading lastError announces a failure that the next successful order already settled.
+            const certs = newCerts(redis);
+            connect(certs);
+            stubLocking(certs);
+
+            await certs.acquireCert('example.com');
+            await certs.setCertificateData('example.com', {
+                lastError: { err: 'an order that failed weeks ago', time: new Date(Date.now() - 30 * 24 * 3600 * 1000) }
+            });
+
+            const data = await certs.acquireCert('example.com');
+
+            assert.ok(data.lastError.err, 'the record still carries its own history');
+            assert.equal(data.renewalError, undefined, 'but this call renewed nothing and failed at nothing');
+        });
+
+        it('should report the recorded reason while the failsafe lock holds the domain', async () => {
+            // Every pass during the hour after a failure comes back here, and each one is a renewal
+            // that was asked for and did not happen.
+            const certs = newCerts(redis);
+            const { server } = connect(certs);
+            stubLocking(certs);
+
+            await certs.acquireCert('example.com');
+            await certs.setCertificateData('example.com', { lastError: { err: 'the order that armed the lock', time: new Date() } });
+            await redis.set(certs.getKey('lock:safe:example.com'), 1);
+
+            const requestsBefore = server.state.requests.length;
+            const data = await certs.acquireCert('example.com');
+
+            assert.equal(data.renewalError.err, 'the order that armed the lock');
+            assert.equal(server.state.requests.length, requestsBefore, 'and nothing was ordered');
+        });
+
+        it('should still say a blocked renewal did not happen when no reason was recorded', async () => {
+            // setCertificateData() can fail after the lock is armed, so the reason is not guaranteed
+            const certs = newCerts(redis);
+            connect(certs);
+            stubLocking(certs);
+
+            await certs.acquireCert('example.com');
+            await redis.set(certs.getKey('lock:safe:example.com'), 1);
+
+            const data = await certs.acquireCert('example.com');
+
+            assert.equal(data.renewalError.code, 'ERENEWALBLOCKED');
+        });
+
+        it('should report a domain that stopped validating, without recording it on the record', async () => {
+            const certs = newCerts(redis);
+            connect(certs);
+            stubLocking(certs);
+
+            const first = await certs.acquireCert('example.com');
+
+            await dueForRenewal(certs, 'example.com');
+            certs.validateDomain = async () => {
+                let err = new Error('CAA record forbids this issuer');
+                err.code = 'caa_mismatch';
+                throw err;
+            };
+
+            const second = await certs.acquireCert('example.com');
+
+            assert.equal(second.cert, first.cert, 'the usable certificate is kept');
+            assert.equal(second.renewalError.err, 'CAA record forbids this issuer');
+            assert.equal(second.renewalError.code, 'caa_mismatch');
+
+            // A domain that cannot be validated is a property of the domain, not of the
+            // certificate, so nothing about it is frozen into the stored record
+            const stored = await certs.loadCertificateData('example.com');
+            assert.equal(stored.renewalError, undefined);
+            assert.equal(stored.lastError, null);
+        });
+
+        it('should not report a renewal error when another worker holds the lock', async () => {
+            // Concurrent callers are not failures: whoever waits is about to be handed the result
+            const certs = newCerts(redis);
+            connect(certs);
+            stubLocking(certs);
+
+            await certs.acquireCert('example.com');
+            await dueForRenewal(certs, 'example.com');
+            certs.locking.waitAcquireLock = async () => ({ success: false });
+
+            const data = await certs.acquireCert('example.com');
+
+            assert.equal(data.status, 'valid');
+            assert.equal(data.renewalError, undefined);
         });
 
         it('should refuse a domain that is not a valid name, naming it in the error', async () => {
@@ -1048,6 +1143,18 @@ describe('Certs storage isolation', () => {
         await certs.setCertificateData('example.com', updates);
 
         assert.deepEqual(updates, snapshot);
+    });
+
+    it('should never store the renewal marker', async () => {
+        // renewalError describes one call, not the certificate. A caller that hands a returned
+        // record straight back would otherwise freeze a renewal failure into the record for good,
+        // which is the exact confusion the field exists to remove.
+        const { certs } = build();
+
+        await certs.setCertificateData('example.com', { domain: 'example.com', status: 'pending', renewalError: { err: 'must not survive' } });
+
+        const stored = await certs.loadCertificateData('example.com');
+        assert.equal(stored.renewalError, undefined);
     });
 
     it('should record that the CA offered no renewal information rather than asking every time', async () => {

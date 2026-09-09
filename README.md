@@ -119,11 +119,24 @@ Static factory method. Returns a new `Certs` instance.
 
 Returns stored certificate data for the domain. If the certificate is missing or expired, automatically acquires a new one via ACME unless `skipAcquire` is `true`.
 
-Returns an object with `cert`, `privateKey`, `ca`, `validFrom`, `validTo`, `altNames`, `serialNumber`, `fingerprint`, `status`, and `lastError`, or `false` if no certificate exists.
+Returns an object with `cert`, `privateKey`, `ca`, `validFrom`, `validTo`, `altNames`, `serialNumber`, `fingerprint`, `status`, and `lastError`, or `false` if no certificate exists. When a renewal was attempted and did not happen, the record also carries `renewalError` - see below.
 
 ### `acquireCert(domain)`
 
 Forces certificate acquisition or renewal for the domain. Validates the domain name and CAA records, obtains a distributed lock, generates a CSR, and requests a certificate via ACME HTTP-01 challenge. Falls back to existing certificate data on error.
+
+#### Telling a failed renewal from a certificate that did not need one
+
+A renewal that fails while a usable certificate is stored returns that certificate, still `status: 'valid'` so the listener keeps serving it, with `renewalError` set to `{ err, code, type, time }`.
+
+Read `renewalError`, not `lastError`, to decide whether to report a failure. They answer different questions:
+
+- `renewalError` describes **this call**. It is set only when the call was asked to renew and could not: the order failed, the domain no longer validates, or a failsafe lock from an earlier failure is still holding the domain. It is never stored. Its `time` is when the reason was recorded, which for a blocked renewal is the failure that armed the block rather than the moment of the call.
+- `lastError` describes **the record**. It is the last failure written for the domain, and it outlives the failure it names - `acquireCert()` answers from the stored record without attempting anything whenever renewal is not due or another worker holds the lock, and the stored error comes back with it.
+
+A caller that reports `lastError` therefore announces failures that were settled long ago. `renewalError` is absent whenever the certificate is fine, whether it was renewed, was not due, or is being renewed by someone else right now.
+
+The field annotates a record, so it only reaches a caller that has one. A domain with no stored certificate reports a failure the way it always did: `acquireCert()` throws when the order fails, and returns `false` when the domain does not validate or a failsafe lock is holding it. So a caller handles three outcomes - a record, a record with `renewalError`, and `false` or a thrown error.
 
 ### `routeHandler(domain, token)`
 
