@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/postalsys/certs/compare/v1.4.0...v1.4.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* key a domain under the name it canonicalizes to, however it was spelled ([ea57976](https://github.com/postalsys/certs/commit/ea579767da711a6c7657a2f59a31632ec3da7ba8))
+
 ## [1.4.0](https://github.com/postalsys/certs/compare/v1.3.0...v1.4.0) (2026-09-09)
 
 
