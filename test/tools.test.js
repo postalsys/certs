@@ -376,6 +376,54 @@ describe('normalizeDomain with A-labels', () => {
         }
     });
 
+    // punycode ends a label on the ideographic and fullwidth stops as well as on the dot, and folds
+    // them into dots when it decodes. A guard that knew only the dot left the A-label behind one of
+    // the others in place, so the record was keyed under a name the CA never sees.
+    it('should decode an A-label after any separator punycode splits on', () => {
+        assert.equal(normalizeDomain('bank\u3002xn--tst-jma.com'), 'bank.tëst.com');
+        assert.equal(normalizeDomain('bank\uFF0Exn--tst-jma.com'), 'bank.tëst.com');
+        assert.equal(normalizeDomain('bank\uFF61xn--tst-jma.com'), 'bank.tëst.com');
+        assert.equal(normalizeDomain('tëst\u3002com'), 'tëst.com');
+    });
+
+    // "xn--xn--ban-0k1a-.example.com" decodes to "xn--ban-0k1a.example.com", which is still an
+    // A-label and decodes again to "bank.example.com". Stopping after one pass keys a record under a
+    // name that normalizing it once more does not produce.
+    it('should decode a name that is encoded more than once', () => {
+        assert.equal(normalizeDomain('xn--xn--ban-0k1a-.example.com'), 'bank.example.com');
+    });
+
+    it('should compose a name that arrives decomposed', () => {
+        assert.equal(normalizeDomain('te\u0301st.com'), 'tést.com');
+    });
+
+    it('should leave an A-label that does not decode as it is', () => {
+        // punycode.toUnicode throws on each of these rather than handing them back
+        assert.equal(normalizeDomain('xn--0.example.com'), 'xn--0.example.com');
+        assert.equal(normalizeDomain('xn--9999999999999999999a.example.com'), 'xn--9999999999999999999a.example.com');
+    });
+
+    // What a record is keyed under has to survive being normalized again, whether that is a caller
+    // handing back what it read or the name coming home from the wire in its A-label form.
+    it('should be a fixpoint', () => {
+        const names = [
+            'xn--tst-jma.com',
+            'bank\u3002xn--tst-jma.com',
+            'xn--xn--ban-0k1a-.example.com',
+            'te\u0301st.com',
+            'tëst.com',
+            'xn--0.example.com',
+            'WWW.Example.COM ',
+            'example.com'
+        ];
+
+        for (const domain of names) {
+            const normalized = normalizeDomain(domain);
+            assert.equal(normalizeDomain(normalized), normalized, domain);
+            assert.equal(normalizeDomain(toAsciiDomain(normalized)), normalized, domain);
+        }
+    });
+
     // punycode.toASCII leaves an all-ASCII name exactly as it found it, and a CA echoes identifiers
     // back lower-cased, so a name that skipped normalizeDomain used to go on the wire mixed-case
     // and then fail to match the authorization it had just asked for.
