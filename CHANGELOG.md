@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/postalsys/certs/compare/v1.4.1...v1.4.2) (2026-09-11)
+
+
+### Bug Fixes
+
+* **deps:** update joi to 18.2.9 ([9618362](https://github.com/postalsys/certs/commit/961836268959a15236bb8a98faa1f63050a1a314))
+
 ## [1.4.1](https://github.com/postalsys/certs/compare/v1.4.0...v1.4.1) (2026-09-10)
 
 
