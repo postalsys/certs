@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.3](https://github.com/postalsys/certs/compare/v1.4.2...v1.4.3) (2026-09-27)
+
+
+### Bug Fixes
+
+* **deps:** update undici to 7.30.0 ([a45497b](https://github.com/postalsys/certs/commit/a45497b1a0e8cc9adaa26b9a1acf14070c84d09d))
+
 ## [1.4.2](https://github.com/postalsys/certs/compare/v1.4.1...v1.4.2) (2026-09-11)
 
 
