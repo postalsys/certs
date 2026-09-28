@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.4](https://github.com/postalsys/certs/compare/v1.4.3...v1.4.4) (2026-09-28)
+
+
+### Bug Fixes
+
+* **acme:** keep IDN records under one key, recover from stale replaces and accounts, and honour long Retry-After values ([622f02d](https://github.com/postalsys/certs/commit/622f02d983e6225d5cc1cb0e745f0793289fd31a))
+
 ## [1.4.3](https://github.com/postalsys/certs/compare/v1.4.2...v1.4.3) (2026-09-27)
 
 
