@@ -439,6 +439,7 @@ describe('Certs acquisition', () => {
         const calls = {
             acquired: [],
             released: [],
+            extended: [],
             count(list, kind) {
                 return calls[list].filter(key => key === certs.getKey(kind)).length;
             }
@@ -452,6 +453,10 @@ describe('Certs acquisition', () => {
             async releaseLock(lock) {
                 calls.released.push(lock && lock.key);
                 return true;
+            },
+            async extendLock(lock, ttl) {
+                calls.extended.push({ key: lock && lock.key, ttl });
+                return { success: true };
             }
         };
 
@@ -477,6 +482,9 @@ describe('Certs acquisition', () => {
             async releaseLock(lock) {
                 lock.release();
                 return true;
+            },
+            async extendLock() {
+                return { success: true };
             }
         };
     }
@@ -1070,6 +1078,272 @@ describe('Certs acquisition', () => {
             const data = await certs.acquireCert('example.com');
             assert.equal(crypto.createPrivateKey(data.privateKey).asymmetricKeyType, 'rsa');
         });
+
+        it('should replace a stored key that no longer matches the configured key type', async () => {
+            const certs = newCerts(redis);
+            const { server } = connect(certs);
+            const first = await certs.acquireCert('example.com');
+            assert.equal(crypto.createPrivateKey(first.privateKey).asymmetricKeyType, 'rsa');
+
+            const ecCerts = new Certs({ redis, keyType: 'ec', acme: { environment: 'test', caaDomains: [] }, logger: silentLogger() });
+            stubLocking(ecCerts);
+            ecCerts.acme = certs.acme;
+            ecCerts.acmeChallenge = certs.acmeChallenge;
+            await dueForRenewal(ecCerts, 'example.com');
+
+            const second = await ecCerts.acquireCert('example.com');
+
+            assert.equal(crypto.createPrivateKey(second.privateKey).asymmetricKeyType, 'ec');
+            assert.ok(new crypto.X509Certificate(second.cert).checkPrivateKey(crypto.createPrivateKey(second.privateKey)));
+            assert.ok(server.state.orders.size >= 2);
+        });
+
+        it('should replace a stored RSA key whose size no longer matches keyBits', async () => {
+            const certs = newCerts(redis);
+            connect(certs);
+            const first = await certs.acquireCert('example.com');
+
+            const bigger = new Certs({ redis, keyBits: 3072, acme: { environment: 'test', caaDomains: [] }, logger: silentLogger() });
+            stubLocking(bigger);
+            bigger.acme = certs.acme;
+            bigger.acmeChallenge = certs.acmeChallenge;
+            await dueForRenewal(bigger, 'example.com');
+
+            const second = await bigger.acquireCert('example.com');
+
+            assert.notEqual(second.privateKey, first.privateKey);
+            assert.equal(crypto.createPrivateKey(second.privateKey).asymmetricKeyDetails.modulusLength, 3072);
+        });
+
+        it('should keep the old key with the old certificate when the order for a replacement key fails', async () => {
+            const certs = newCerts(redis);
+            const { tokens } = connect(certs);
+            const first = await certs.acquireCert('example.com');
+
+            const ecCerts = new Certs({ redis, keyType: 'ec', acme: { environment: 'test', caaDomains: [] }, logger: silentLogger() });
+            stubLocking(ecCerts);
+            ecCerts.acme = certs.acme;
+            // Challenges are never published, so validation fails.
+            ecCerts.acmeChallenge.set = async () => tokens.clear();
+            await dueForRenewal(ecCerts, 'example.com');
+
+            const result = await ecCerts.acquireCert('example.com');
+            assert.ok(result.renewalError);
+
+            const stored = await ecCerts.loadCertificateData('example.com');
+            assert.equal(stored.privateKey, first.privateKey);
+            assert.ok(new crypto.X509Certificate(stored.cert).checkPrivateKey(crypto.createPrivateKey(stored.privateKey)));
+        });
+    });
+
+    describe('operation lock', () => {
+        it('should extend the operation lock once an order has been running a while', async () => {
+            const certs = newCerts(redis);
+            connect(certs);
+            const calls = stubLocking(certs);
+
+            // The account lookup is made to look like it took most of the lock's lifetime, as
+            // waiting for the account lock can. The clock only moves forward from there, so the
+            // order's own deadlines are computed against the same shifted time.
+            const realNow = Date.now;
+            let offset = 0;
+            Date.now = () => realNow() + offset;
+            const getAcmeAccount = certs.getAcmeAccount.bind(certs);
+            certs.getAcmeAccount = async (...args) => {
+                const account = await getAcmeAccount(...args);
+                offset += 5 * 60 * 1000;
+                return account;
+            };
+
+            try {
+                await certs.acquireCert('example.com');
+            } finally {
+                Date.now = realNow;
+            }
+
+            const extended = calls.extended.filter(entry => entry.key === certs.getKey(OP_LOCK));
+            assert.ok(extended.length >= 1);
+            assert.ok(extended.every(entry => entry.ttl === 10 * 60 * 1000));
+        });
+
+        it('should not extend the operation lock on every progress step of a fast order', async () => {
+            const certs = newCerts(redis);
+            connect(certs);
+            const calls = stubLocking(certs);
+
+            await certs.acquireCert('example.com');
+
+            assert.equal(calls.extended.filter(entry => entry.key === certs.getKey(OP_LOCK)).length, 0);
+        });
+
+        it('should carry on when the lock cannot be extended', async () => {
+            const certs = newCerts(redis);
+            connect(certs);
+            stubLocking(certs);
+            certs.locking.extendLock = async () => {
+                throw new Error('redis gone');
+            };
+
+            const data = await certs.acquireCert('example.com');
+            assert.equal(data.status, 'valid');
+        });
+
+        it('should still provision the account when the account lock wait gives up', async () => {
+            const certs = newCerts(redis);
+            connect(certs);
+            const calls = stubLocking(certs);
+            const inner = certs.locking.waitAcquireLock;
+            certs.locking.waitAcquireLock = async key => (key === certs.getKey(ACCOUNT_LOCK) ? { success: false, key } : inner(key));
+
+            const data = await certs.acquireCert('example.com');
+
+            assert.equal(data.status, 'valid');
+            assert.ok((await certs.settings.get('account:test')).account.key.kid);
+            // A lock that was never granted is not released.
+            assert.equal(calls.count('released', ACCOUNT_LOCK), 0);
+        });
+    });
+
+    describe('rate limits', () => {
+        it('should hold the failsafe lock for as long as the CA asked', async () => {
+            const certs = newCerts(redis);
+            connect(certs, { faults: { 'new-order': [{ fault: 'rateLimited', retryAfter: '7200' }] } });
+
+            await assert.rejects(certs.acquireCert('example.com'), err => err.retryAfter === 7200 * 1000);
+            assert.equal(await redis.ttl(certs.getKey('lock:safe:example.com')), 7200);
+        });
+
+        it('should bound the failsafe lock at a day', async () => {
+            const certs = newCerts(redis);
+            connect(certs, { faults: { 'new-order': [{ fault: 'rateLimited', retryAfter: String(30 * 24 * 3600) }] } });
+
+            await assert.rejects(certs.acquireCert('example.com'));
+            assert.equal(await redis.ttl(certs.getKey('lock:safe:example.com')), 24 * 3600);
+        });
+    });
+
+    describe('account recovery', () => {
+        it('should provision a new account when the stored one belongs to another directory', async () => {
+            const certs = newCerts(redis);
+            const { server } = connect(certs);
+            await certs.settings.set('account:test', {
+                privateKey: crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'sec1', format: 'pem' }),
+                account: { key: { kid: 'https://other-ca.test/acct/1' } },
+                directoryUrl: 'https://other-ca.test/directory'
+            });
+
+            const data = await certs.acquireCert('example.com');
+
+            assert.equal(data.status, 'valid');
+            const stored = await certs.settings.get('account:test');
+            assert.equal(stored.directoryUrl, server.directoryUrl);
+            assert.notEqual(stored.account.key.kid, 'https://other-ca.test/acct/1');
+        });
+
+        it('should store the directory URL with a new account', async () => {
+            const certs = newCerts(redis);
+            const { server } = connect(certs);
+
+            await certs.acquireCert('example.com');
+
+            assert.equal((await certs.settings.get('account:test')).directoryUrl, server.directoryUrl);
+        });
+
+        it('should provision a new account and order again when the CA answers accountDoesNotExist', async () => {
+            const certs = newCerts(redis);
+            const { server } = connect(certs);
+            await certs.acquireCert('example.com');
+            const oldKid = (await certs.settings.get('account:test')).account.key.kid;
+
+            // The CA forgets every account, as a reset staging environment or a deactivation does.
+            server.state.accounts.clear();
+            await dueForRenewal(certs, 'example.com');
+
+            const data = await certs.acquireCert('example.com');
+
+            assert.equal(data.renewalError, undefined);
+            assert.equal(data.certVersion, 2);
+            const newKid = (await certs.settings.get('account:test')).account.key.kid;
+            assert.notEqual(newKid, oldKid);
+        });
+    });
+
+    describe('CAA', () => {
+        const caaCerts = (records, caaDomains = ['letsencrypt.org']) => {
+            const asked = [];
+            const certs = new Certs({
+                redis,
+                acme: { environment: 'test', caaDomains },
+                logger: silentLogger(),
+                resolver: {
+                    async resolveCaa(name) {
+                        asked.push(name);
+                        if (!records[name]) {
+                            const err = new Error('queryCaa ENODATA');
+                            err.code = 'ENODATA';
+                            throw err;
+                        }
+                        return records[name];
+                    }
+                }
+            });
+            return { certs, asked };
+        };
+
+        it('should accept a domain with no CAA records anywhere', async () => {
+            const { certs, asked } = caaCerts({});
+            assert.equal(await certs.validateDomain('a.b.example.com'), true);
+            assert.deepEqual(asked, ['a.b.example.com', 'b.example.com', 'example.com']);
+        });
+
+        it('should stop at the closest CAA record that lists the CA', async () => {
+            const { certs, asked } = caaCerts({
+                'b.example.com': [{ critical: 0, issue: 'letsencrypt.org' }],
+                'example.com': [{ critical: 0, issue: 'other.ca' }]
+            });
+            assert.equal(await certs.validateDomain('a.b.example.com'), true);
+            assert.deepEqual(asked, ['a.b.example.com', 'b.example.com']);
+        });
+
+        it('should refuse a domain whose closest CAA record names another CA', async () => {
+            const { certs } = caaCerts({ 'example.com': [{ critical: 0, issue: 'other.ca' }] });
+            await assert.rejects(certs.validateDomain('a.example.com'), err => err.code === 'caa_mismatch' && err.responseCode === 403);
+        });
+
+        it('should not consult DNS when no CAA domains are configured', async () => {
+            const { certs, asked } = caaCerts({ 'example.com': [{ critical: 0, issue: 'other.ca' }] }, []);
+            assert.equal(await certs.validateDomain('a.example.com'), true);
+            assert.deepEqual(asked, []);
+        });
+    });
+
+    describe('internationalized record keys', () => {
+        const IDN = 't\u00ebst.example.com';
+        it('should store a field written under the A-label where the Unicode reader finds it', async () => {
+            const certs = newCerts(redis);
+            connect(certs);
+            await certs.acquireCert(IDN);
+
+            // EmailEngine records its own last check under the hostname as it holds it, which for
+            // an IDN host is the A-label.
+            const lastCheck = new Date();
+            await certs.setCertificateData('xn--tst-jma.example.com', { lastCheck });
+
+            const record = await certs.getCertificate(IDN, true);
+            assert.equal(new Date(record.lastCheck).getTime(), lastCheck.getTime());
+            assert.equal(await redis.hexists(certs.settings.getKey('settings'), 'domain:xn--tst-jma.example.com:lastCheck'), 0);
+        });
+
+        it('should delete the Unicode record when given the A-label', async () => {
+            const certs = newCerts(redis);
+            connect(certs);
+            await certs.acquireCert(IDN);
+
+            await certs.deleteCertificateData('xn--tst-jma.example.com');
+
+            assert.equal(await certs.loadCertificateData(IDN), false);
+            assert.deepEqual(await certs.listCertificateDomains(), []);
+        });
     });
 });
 
@@ -1106,6 +1380,9 @@ describe('Certs storage isolation', () => {
             },
             async releaseLock() {
                 return true;
+            },
+            async extendLock() {
+                return { success: true };
             }
         };
         return { certs, server };

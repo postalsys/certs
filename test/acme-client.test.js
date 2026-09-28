@@ -316,8 +316,10 @@ describe('AcmeClient', () => {
             assert.equal(paths.filter(path => path.startsWith('/finalize/')).length, 1);
             assert.ok(paths.filter(path => path.startsWith('/order/')).length >= 3);
 
-            // and the order poll comes after the finalize, not before
-            assert.ok(paths.indexOf('/finalize/o-2') < paths.indexOf('/order/o-2'));
+            // and the order is polled after the finalize. It is also read once before it, to see
+            // that it is ready, which is a POST-as-GET and not a second finalize.
+            assert.ok(paths.indexOf('/finalize/o-2') < paths.lastIndexOf('/order/o-2'));
+            assert.ok(paths.indexOf('/order/o-2') < paths.indexOf('/finalize/o-2'));
         });
 
         it('should still succeed when the CA issues synchronously', async () => {
@@ -979,5 +981,100 @@ describe('AcmeClient domain case handling', () => {
 
         assert.match(leaf.subjectAltName, /DNS:example\.com/);
         assert.match(leaf.subjectAltName, /DNS:www\.example\.com/);
+    });
+});
+
+describe('AcmeClient order edge cases', () => {
+    // Builds a client on a fresh mock CA with an account already registered, for the tests that
+    // need to queue a fault after the account exists or reuse the server for a second order.
+    async function setup(serverOptions = {}, timeouts = TEST_TIMEOUTS) {
+        const store = createChallengeStore();
+        const server = createMockAcmeServer(Object.assign({ resolveChallenge: store.resolve }, serverOptions));
+        const client = new AcmeClient({ directoryUrl: server.directoryUrl, request: server.request, timeouts });
+        const accountKey = ecKey();
+        const { kid } = await client.createAccount({ key: accountKey });
+        const order = extra =>
+            client.createCertificate(
+                Object.assign({ accountKey, kid, certificateKey: rsaKey(), domains: ['example.com'], challenges: { 'http-01': store.handler } }, extra)
+            );
+        return { server, client, order };
+    }
+
+    const newOrderPayloads = server =>
+        server.state.requests
+            .filter(entry => entry.path === '/new-order')
+            .map(entry => JSON.parse(Buffer.from(JSON.parse(entry.body).payload, 'base64url').toString()));
+
+    it('should order again without replaces when the CA answers alreadyReplaced', async () => {
+        const newOrderFaults = [];
+        const { server, order } = await setup({ faults: { 'new-order': newOrderFaults } });
+        const first = await order();
+
+        newOrderFaults.push('alreadyReplaced');
+        server.state.requests.length = 0;
+        const second = await order({ replaces: first.cert });
+
+        assert.ok(second.cert);
+        const payloads = newOrderPayloads(server);
+        assert.equal(payloads.length, 2);
+        assert.ok(payloads[0].replaces, 'the first attempt named the replaced certificate');
+        assert.equal(payloads[1].replaces, undefined, 'the retry left it out');
+    });
+
+    it('should not retry without replaces for an unrelated order failure', async () => {
+        const newOrderFaults = [];
+        const { server, order } = await setup({ faults: { 'new-order': newOrderFaults } });
+        const first = await order();
+
+        newOrderFaults.push('unauthorized');
+        server.state.requests.length = 0;
+        await assert.rejects(order({ replaces: first.cert }), err => err instanceof AcmeError && err.statusCode === 403);
+        assert.equal(newOrderPayloads(server).length, 1);
+    });
+
+    it('should wait for the order to become ready before finalizing', async () => {
+        // An asynchronous CA can leave the order pending after the last authorization is valid.
+        // Finalizing it then is answered with 403 orderNotReady.
+        const { server, order } = await setup({ readyDelay: 2 });
+        const result = await order();
+
+        assert.ok(result.cert);
+        assert.equal(server.state.counters.finalize, 1);
+    });
+
+    // Before, the delay was clamped to MAX_POLL_RETRY_AFTER and slept through in process. The
+    // timeout makes such a regression fail fast rather than after that sleep.
+    it('should not retry a rate limit whose Retry-After exceeds the polling bound, and keep the full delay', { timeout: 5000 }, async () => {
+        const newOrderFaults = [];
+        const { server, order } = await setup({ faults: { 'new-order': newOrderFaults } });
+        newOrderFaults.push({ fault: 'rateLimited', retryAfter: '7200' });
+
+        await assert.rejects(order(), err => {
+            assert.ok(err instanceof AcmeError);
+            assert.equal(err.type, 'urn:ietf:params:acme:error:rateLimited');
+            assert.equal(err.retryAfter, 7200 * 1000);
+            return true;
+        });
+
+        assert.equal(newOrderPayloads(server).length, 1);
+    });
+
+    it('should give up polling at the deadline', async () => {
+        const { order } = await setup({ validationDelay: 1000 }, Object.assign({}, TEST_TIMEOUTS, { validation: 30 }));
+
+        await assert.rejects(order(), err => {
+            assert.ok(err instanceof AcmeError);
+            assert.match(err.message, /Timed out waiting for the authorization for example\.com to settle, last status "pending"/);
+            return true;
+        });
+    });
+
+    it('should report each phase of the order so a caller can extend a lock', async () => {
+        const { order } = await setup();
+        const phases = [];
+
+        await order({ onProgress: async phase => phases.push(phase) });
+
+        assert.deepEqual(phases, ['authorization', 'finalize', 'download']);
     });
 });

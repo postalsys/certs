@@ -30,7 +30,8 @@ const FAULTS = {
     badNonce: [400, 'badNonce', 'JWS has an invalid anti-replay nonce'],
     serverInternal: [500, 'serverInternal', 'The server experienced an internal error'],
     rateLimited: [429, 'rateLimited', 'Too many certificates already issued'],
-    unauthorized: [403, 'unauthorized', 'Account is not valid']
+    unauthorized: [403, 'unauthorized', 'Account is not valid'],
+    alreadyReplaced: [409, 'alreadyReplaced', 'The certificate named in replaces has already been replaced']
 };
 
 function decodeJson(base64) {
@@ -46,8 +47,11 @@ function decodeJson(base64) {
  * @param {Number} [options.validationDelay] how many authorization polls stay `pending`
  * @param {Number} [options.certificateLifetimeDays] validity of issued certificates
  * @param {Boolean} [options.renewalInfo] advertise the RFC 9773 endpoint
+ * @param {Number} [options.readyDelay] how many order polls stay `pending` after every
+ *   authorization is valid, as an asynchronous CA may answer
  * @param {Object} [options.faults] one-shot failures keyed by endpoint name, e.g.
- *   `{ newOrder: ['badNonce', 'serverInternal'] }`
+ *   `{ newOrder: ['badNonce', 'serverInternal'] }`. An entry may also be
+ *   `{ fault: 'rateLimited', retryAfter: '7200' }` to set the Retry-After it carries.
  */
 function createMockAcmeServer(options = {}) {
     const ca = createTestCa();
@@ -68,6 +72,7 @@ function createMockAcmeServer(options = {}) {
     const faults = Object.assign({}, options.faults);
     const finalizeDelay = options.finalizeDelay === undefined ? 1 : options.finalizeDelay;
     const validationDelay = options.validationDelay === undefined ? 1 : options.validationDelay;
+    const readyDelay = options.readyDelay || 0;
     const lifetimeDays = options.certificateLifetimeDays || 90;
     const resolveChallenge = options.resolveChallenge || (() => null);
     // Seconds, as the header carries it. Zero by default so tests poll without sleeping.
@@ -212,7 +217,11 @@ function createMockAcmeServer(options = {}) {
             if (authorization.status === 'invalid') {
                 order.status = 'invalid';
             } else if (order.authorizationIds.every(id => state.authorizations.get(id).status === 'valid')) {
-                order.status = 'ready';
+                if (readyDelay) {
+                    order.readyIn = readyDelay;
+                } else {
+                    order.status = 'ready';
+                }
             }
         }
     }
@@ -260,7 +269,8 @@ function createMockAcmeServer(options = {}) {
 
         // Everything below is a signed POST.
         const endpoint = path.split('/')[1];
-        const fault = takeFault(endpoint);
+        const queued = takeFault(endpoint);
+        const fault = queued && typeof queued === 'object' ? queued.fault : queued;
         if (fault) {
             if (fault === 'badNonce') {
                 // A real server burns the nonce before rejecting it.
@@ -271,7 +281,9 @@ function createMockAcmeServer(options = {}) {
                 }
             }
             const response = problem(...FAULTS[fault], mintNonce());
-            if (fault === 'rateLimited') {
+            if (queued && typeof queued === 'object' && queued.retryAfter !== undefined) {
+                response.headers['retry-after'] = String(queued.retryAfter);
+            } else if (fault === 'rateLimited') {
                 response.headers['retry-after'] = '1';
             }
             return response;
@@ -393,6 +405,9 @@ function createMockAcmeServer(options = {}) {
             const order = state.orders.get(orderId);
             if (!order) {
                 return problem(404, 'malformed', 'Unknown order', nonce);
+            }
+            if (order.status === 'pending' && order.readyIn && --order.readyIn <= 0) {
+                order.status = 'ready';
             }
             if (order.status === 'processing' && order.polls++ >= finalizeDelay) {
                 issue(orderId);

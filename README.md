@@ -94,6 +94,7 @@ app.get('/.well-known/acme-challenge/:token', (req, res) => {
 | `keyType`                     | String   | `'rsa'`                  | Key type for domain certificates: `'rsa'` or `'ec'` (P-256)                              |
 | `logger`                      | Object   | pino instance            | Logger (pino-compatible)                                                                 |
 | `dispatcher`                  | Object   | undici global dispatcher | undici `Dispatcher` (for example a `ProxyAgent`) that every ACME request is sent through |
+| `resolver`                    | Object   | `dns.promises.Resolver`  | Anything with a `resolveCaa(name)` method, used for the CAA check                        |
 
 The constructor refuses an option name it does not recognise, and says where a misplaced one belongs. An ACME option passed at the top level rather than inside `acme` has no effect at all - `environment` and `directoryUrl` are the ones worth watching, since an instance that quietly keeps the defaults is one pointed at the Let's Encrypt staging directory, and nothing surfaces that until it first tries to issue. `keyBits`, `keyExponent` and `keyType` are read at both levels and mean different things at each, so both placements are accepted.
 
@@ -102,6 +103,10 @@ Timeouts default to 30 seconds for a single HTTP exchange, two minutes each for 
 Domains are held in their Unicode spelling throughout, including as Redis keys and in `routeHandler()`. Internationalized names are converted to A-labels only where the protocol requires it, in the order identifiers and in the certificate signing request.
 
 RSA is the default key type on both counts because these certificates terminate TLS for IMAP and SMTP clients as well as browsers. Set `keyType: 'ec'` where every client is known to support P-256.
+
+A domain keeps its private key across renewals for as long as that key matches `keyType` (and, for RSA, `keyBits`). After either option changes, an already-provisioned domain gets a new key at its next renewal, not immediately, and the new key is only stored together with the certificate issued for it, so a failed order leaves the current key and certificate in place. The ACME account key is never regenerated because `acme.keyType` or `acme.keyBits` changed.
+
+The ACME account is stored per `acme.environment`, together with the directory it was registered at. When the configured directory differs from the stored one, or the CA answers an order with `accountDoesNotExist`, a new account is registered and replaces the stored one.
 
 ### Encryption at rest
 
@@ -172,7 +177,7 @@ When the CA offers RFC 9773 renewal information and `checkRenewalDue()` has fetc
 
 Either way the answer is capped by a backstop at half the threshold, so a CA that suggests a window running past the certificate's own expiry cannot talk this library out of renewing at all.
 
-`getCertificate()` renews on the spot when a certificate is due. After a failed attempt a failsafe lock leaves the domain alone for an hour, so a rate limit or a misconfigured DNS record is not hammered. A renewal names the certificate it replaces, which is how Let's Encrypt counts it against its renewal allowance rather than the duplicate-certificate limit.
+`getCertificate()` renews on the spot when a certificate is due. After a failed attempt a failsafe lock leaves the domain alone for an hour, or for as long as the CA's `Retry-After` asked when that is longer (at most a day), so a rate limit or a misconfigured DNS record is not hammered. A `Retry-After` longer than a minute is not waited out inside the request; the `AcmeError` carries the full delay in `retryAfter`. A renewal names the certificate it replaces, which is how Let's Encrypt counts it against its renewal allowance rather than the duplicate-certificate limit.
 
 ## Standards
 
