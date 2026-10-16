@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.5](https://github.com/postalsys/certs/compare/v1.4.4...v1.4.5) (2026-10-16)
+
+
+### Bug Fixes
+
+* require https for every ACME URL, bound the error text copied from the CA and read CAA issue parameters ([635c34a](https://github.com/postalsys/certs/commit/635c34a927a0becd2630f89542d8195d6e6f240b))
+
 ## [1.4.4](https://github.com/postalsys/certs/compare/v1.4.3...v1.4.4) (2026-09-28)
 
 
