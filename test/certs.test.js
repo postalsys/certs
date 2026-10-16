@@ -1315,6 +1315,33 @@ describe('Certs acquisition', () => {
             assert.equal(await certs.validateDomain('a.example.com'), true);
             assert.deepEqual(asked, []);
         });
+
+        // RFC 8659 section 4.2: the issue value is the issuer domain, optionally followed by ";"
+        // and parameters. A hardened record used to be read as naming some other CA.
+        it('should read the issuer domain off an issue value that carries parameters', async () => {
+            const { certs } = caaCerts({
+                'example.com': [
+                    { critical: 0, issue: 'other.ca' },
+                    { critical: 0, issue: 'LetsEncrypt.org; validationmethods=http-01; accounturi=https://acme-v02.api.letsencrypt.org/acme/acct/1' }
+                ]
+            });
+            assert.equal(await certs.validateDomain('a.example.com'), true);
+        });
+
+        it('should refuse an issue value that names no issuer at all', async () => {
+            const { certs } = caaCerts({ 'example.com': [{ critical: 0, issue: ';' }] });
+            await assert.rejects(certs.validateDomain('a.example.com'), err => err.code === 'caa_mismatch');
+        });
+
+        it('should not restrict issuance on a record set that carries no issue tag, and stop there', async () => {
+            const { certs, asked } = caaCerts({
+                'example.com': [{ critical: 0, iodef: 'mailto:security@example.com' }],
+                // never consulted: the closest record set decides
+                com: [{ critical: 0, issue: 'other.ca' }]
+            });
+            assert.equal(await certs.validateDomain('a.example.com'), true);
+            assert.deepEqual(asked, ['a.example.com', 'example.com']);
+        });
     });
 
     describe('internationalized record keys', () => {

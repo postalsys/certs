@@ -79,7 +79,7 @@ app.get('/.well-known/acme-challenge/:token', (req, res) => {
 | `encryptFn`                   | Function | identity                 | Async function to encrypt private keys before storage                                    |
 | `decryptFn`                   | Function | identity                 | Async function to decrypt private keys after retrieval                                   |
 | `acme.environment`            | String   | `'development'`          | `'development'` (staging) or `'production'`                                              |
-| `acme.directoryUrl`           | String   | LE staging URL           | ACME directory URL                                                                       |
+| `acme.directoryUrl`           | String   | LE staging URL           | ACME directory URL, https only, as is every URL the directory names                      |
 | `acme.email`                  | String   |                          | Subscriber email for the ACME account                                                    |
 | `acme.caaDomains`             | Array    | `['letsencrypt.org']`    | Allowed CAA record domains                                                               |
 | `acme.keyBits`                | Number   | `2048`                   | RSA key size for ACME account key                                                        |

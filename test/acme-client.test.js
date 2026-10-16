@@ -900,6 +900,111 @@ describe('AcmeClient regressions', () => {
     });
 });
 
+// The CA names every URL the client fetches after the directory, and writes every string that
+// ends up in an error. Neither is taken at face value.
+describe('AcmeClient URL and response bounds', () => {
+    it('should refuse a directory URL that is not https without sending anything', async () => {
+        let attempts = 0;
+        const client = new AcmeClient({
+            directoryUrl: 'http://acme.test/directory',
+            request: async () => {
+                attempts++;
+                return { statusCode: 200, headers: {}, body: { newNonce: 'n', newOrder: 'o' } };
+            }
+        });
+
+        await assert.rejects(client.init(), err => {
+            assert.ok(err instanceof AcmeError);
+            assert.match(err.message, /not https: http:\/\/acme\.test\/directory/);
+            return true;
+        });
+        assert.equal(attempts, 0);
+    });
+
+    it('should refuse a URL the directory names that is not https, before any request reaches it', async () => {
+        const store = createChallengeStore();
+        const server = createMockAcmeServer({ resolveChallenge: store.resolve });
+        const client = new AcmeClient({ directoryUrl: server.directoryUrl, request: server.request, timeouts: TEST_TIMEOUTS });
+
+        const requested = [];
+        const inner = server.request;
+        client.request = async opts => {
+            requested.push(opts.url);
+            const response = await inner(opts);
+            if (/\/directory$/.test(opts.url)) {
+                response.body.newOrder = 'http://169.254.169.254/latest/meta-data/';
+            }
+            return response;
+        };
+
+        const accountKey = ecKey();
+        const { kid } = await client.createAccount({ key: accountKey });
+
+        await assert.rejects(
+            client.createCertificate({ accountKey, kid, certificateKey: rsaKey(), domains: ['example.com'], challenges: { 'http-01': store.handler } }),
+            /not https: http:\/\/169\.254\.169\.254/
+        );
+        assert.ok(requested.length > 0);
+        assert.ok(
+            requested.every(url => url.startsWith('https://')),
+            'nothing was sent to the http URL'
+        );
+    });
+
+    it('should cut what the CA said before it goes into an error', async () => {
+        const problem = new AcmeClient({
+            directoryUrl: 'https://acme.test/directory',
+            request: async () => ({ statusCode: 500, headers: {}, body: { type: `urn:${'t'.repeat(5000)}`, detail: 'd'.repeat(100000) } })
+        });
+
+        await assert.rejects(problem.init(), err => {
+            assert.ok(err instanceof AcmeError);
+            assert.equal(err.detail.length, 1024);
+            assert.equal(err.type.length, 1024);
+            assert.ok(err.message.length < 1100, `message is ${err.message.length} characters`);
+            return true;
+        });
+
+        const text = new AcmeClient({
+            directoryUrl: 'https://acme.test/directory',
+            request: async () => ({ statusCode: 502, headers: {}, body: 'x'.repeat(100000) })
+        });
+        await assert.rejects(text.init(), err => err.message.length < 1100);
+
+        const redirect = new AcmeClient({
+            directoryUrl: 'https://acme.test/directory',
+            request: async () => ({ statusCode: 302, headers: { location: `https://elsewhere.test/${'p'.repeat(100000)}` }, body: '' })
+        });
+        await assert.rejects(redirect.init(), err => err.message.length < 1100);
+    });
+
+    it('should refuse an order that lists more authorizations than it has identifiers', async () => {
+        const store = createChallengeStore();
+        const server = createMockAcmeServer({ resolveChallenge: store.resolve });
+        const client = new AcmeClient({ directoryUrl: server.directoryUrl, request: server.request, timeouts: TEST_TIMEOUTS });
+
+        const accountKey = ecKey();
+        const { kid } = await client.createAccount({ key: accountKey });
+
+        // Each listed authorization would cost a signed request and a validation wait, with the
+        // caller extending its lock the whole time.
+        interceptResponses(client, server, (opts, response) => {
+            if (/\/new-order$/.test(opts.url)) {
+                for (let i = 0; i < 1000; i++) {
+                    response.body.authorizations.push(`https://acme.test/authz/bogus-${i}`);
+                }
+            }
+        });
+
+        await assert.rejects(
+            client.createCertificate({ accountKey, kid, certificateKey: rsaKey(), domains: ['example.com'], challenges: { 'http-01': store.handler } }),
+            /returned 1001 authorizations for an order of 1 identifiers/
+        );
+        assert.equal(server.state.requests.filter(entry => entry.path.startsWith('/authz/')).length, 0, 'no authorization was fetched');
+        assert.equal(store.tokens.size, 0, 'nothing was published');
+    });
+});
+
 describe('AcmeClient identifier binding', () => {
     it('should refuse an authorization for a domain the order did not ask for', async () => {
         const store = createChallengeStore();
