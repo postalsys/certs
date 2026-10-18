@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.6](https://github.com/postalsys/certs/compare/v1.4.5...v1.4.6) (2026-10-18)
+
+
+### Bug Fixes
+
+* bump joi to 18.3.0 and undici to 7.30.1 ([510ab58](https://github.com/postalsys/certs/commit/510ab586e4c007f459bbb61135a84f6bf21a45ef))
+
 ## [1.4.5](https://github.com/postalsys/certs/compare/v1.4.4...v1.4.5) (2026-10-16)
 
 
