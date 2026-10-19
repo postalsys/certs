@@ -29,8 +29,30 @@ jobs:
             - run: npm run lint
             - run: npm run format:check
             - run: npm test
+              if: matrix.node-version != '24.x'
+            # One matrix entry runs the suite under c8, which enforces the thresholds in .c8rc.json
+            - run: npm run test:coverage
+              if: matrix.node-version == '24.x'
             # Node 22+ loads ES modules through require() by default, which would hide an ESM-only
-            # dependency. Run the suite again with that turned off, as the pkg binary EmailEngine
-            # ships would load it.
+            # dependency. Require the built CommonJS entry with that turned off, the way the pkg
+            # binary EmailEngine ships loads it; Node 20 has no such flag to set.
             - run: npm run test:cjs
               if: matrix.node-version != '20.x'
+
+    # EmailEngine bundles this library into a @yao-pkg/pkg binary. Build one around the packed
+    # package and run the CommonJS smoke test inside it, so a module pkg can not trace fails here
+    pkg:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-node@v7
+              with:
+                  node-version: 24.x
+                  cache: npm
+            # pkg downloads a prebuilt Node.js base binary for its target on every fresh runner
+            - uses: actions/cache@v6
+              with:
+                  path: ~/.pkg-cache
+                  key: pkg-cache-${{ runner.os }}-${{ hashFiles('scripts/pkg-smoke.js') }}
+            - run: npm ci
+            - run: npm run test:pkg

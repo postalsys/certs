@@ -1,8 +1,7 @@
-'use strict';
+import { Redis } from 'ioredis';
+import express from 'express';
+import { Certs } from '@postalsys/certs';
 
-const Redis = require('ioredis');
-
-const express = require('express');
 const app = express();
 const port = 7003;
 
@@ -10,7 +9,6 @@ const port = 7003;
 // By default, it will connect to localhost:6379.
 // We are going to cover how to specify connection options soon.
 const redis = new Redis();
-const { Certs } = require('../');
 
 let certs = new Certs({
     redis,
@@ -38,7 +36,7 @@ let certs = new Certs({
             return value;
         }
 
-        return Buffer.from(value.substr(1), 'hex').toString();
+        return Buffer.from(value.slice(1), 'hex').toString();
     }
 });
 

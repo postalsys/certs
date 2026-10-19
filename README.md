@@ -2,7 +2,7 @@
 
 Manage Let's Encrypt SSL/TLS certificates with automatic acquisition, renewal, and storage via the ACME protocol. Certificates and ACME account data are stored in Redis. Supports ACME HTTP-01 challenges.
 
-The ACME client is built in (`lib/acme-client.js`) and speaks RFC 8555 plus the RFC 9773 renewal information extension. It depends on nothing but `node:crypto` and `undici`, so certificate issuance has no third party cryptography or ASN.1 stack behind it.
+The ACME client is built in (`src/acme-client.ts`) and speaks RFC 8555 plus the RFC 9773 renewal information extension. It depends on nothing but `node:crypto` and `undici`, so certificate issuance has no third party cryptography or ASN.1 stack behind it.
 
 ## Installation
 
@@ -11,6 +11,8 @@ npm install @postalsys/certs
 ```
 
 **Requirements:** Node.js 20+, Redis
+
+The package is written in TypeScript and ships both an ES module and a CommonJS build, each with type declarations. `import { Certs } from '@postalsys/certs'` and `const { Certs } = require('@postalsys/certs')` both work, and so do the deep imports of earlier releases, such as `require('@postalsys/certs/lib/settings')`. The CommonJS build loads no ES module, so it can be bundled with `@yao-pkg/pkg`.
 
 ## Usage
 
@@ -160,6 +162,8 @@ Whether a certificate should be renewed now, consulting the CA first and refresh
 ### Module exports
 
 `isRenewalDue(certificateData)` and `nextRenewalTime(certificateData)` answer from a stored record alone, with no network call, and are the right calls on a hot path. `renewalThreshold(certificateData)` returns how much remaining validity makes a certificate due under the lifetime rule.
+
+`AcmeError` is the class of every failure the CA answered with (`statusCode`, the problem document `type` and `detail`, and `retryAfter` in milliseconds when the CA asked to wait). The types of the options and of the stored records are exported as well (`CertsOptions`, `AcmeOptions`, `CertificateData`, `ErrorRecord`, `RenewalInfoRecord`).
 
 ### `listCertificateDomains()`
 
