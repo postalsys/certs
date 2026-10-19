@@ -59,7 +59,7 @@ side field. Renewal information is refreshed in the background, which is exactly
 
 ## Technology Stack
 
-- **Runtime**: Node.js (CommonJS). Tested on Node 22 and 24.
+- **Runtime**: Node.js (CommonJS). Requires Node 20 or newer; tested on Node 20, 22 and 24.
 - **ACME**: in-house (`lib/acme-client.js`), on `node:crypto` only; HTTP through
   `undici` (`lib/acme-request.js`)
 - **Storage**: Redis via an `ioredis`-compatible client (injected by the caller)
@@ -75,8 +75,15 @@ they are not runtime dependencies of the library.
 ## Development Commands
 
 ```
-npm test            # Run the full test suite (node --test --test-force-exit test/*.test.js)
-npm run update      # Refresh dependencies (see Dependency Management)
+npm test                 # Run the full test suite (node --test --test-force-exit test/*.test.js)
+npm run test:coverage    # The same suite under c8
+node --test --test-force-exit test/der.test.js                    # A single test file
+node --test --test-force-exit --test-name-pattern="RFC 7638" test/jose.test.js  # Matching tests only
+npm run lint             # ESLint (flat config in eslint.config.js)
+npm run lint:fix         # ESLint with autofix
+npm run format           # Prettier, writes changes
+npm run format:check     # Prettier, check only (CI runs this)
+npm run update           # Refresh dependencies (see Dependency Management)
 ```
 
 ## Testing
@@ -102,7 +109,7 @@ npm run update      # Refresh dependencies (see Dependency Management)
 - For live testing against a real CA, `examples/test.js` serves the challenge on port
   7003 for `localdev.kreata.ee`, which an SSH reverse tunnel
   (`ssh -R 7003:localhost:7003 kreata.ee`) forwards from that host's nginx.
-- CI (`.github/workflows/test.yaml`) runs `npm test` on Node 22 and 24.
+- CI (`.github/workflows/test.yaml`) runs lint, format check and `npm test` on Node 20, 22 and 24.
 - `test/msgpack.test.js` pins the stored wire format against hex fixtures produced
   by the original `msgpack5`. Redis keeps certificate and ACME account records
   indefinitely, so any change to serialization must still decode those fixtures
@@ -138,12 +145,14 @@ When in doubt, check a candidate dependency's `package.json` for a CommonJS
   library to add a feature is how this package ended up on an abandoned stack the
   first time.
 - Update policy lives in `.ncurc.js`:
-    - `ioredis` is held to **minor** updates only (stay on 5.x). This library never
-      creates a Redis client, it uses the one the caller injects, and EmailEngine is
-      itself capped at ioredis 5 by bullmq. Keeping `examples/test.js` on the same
-      major means it exercises the client consumers actually pass in.
-    - `eslint-config-prettier` and `express` are pinned (rejected from auto-update).
-      `express` is kept on the 4.x line.
+    - `undici` stays on the 7.x line (8.x needs Node 22.19+ and EmailEngine keeps a
+      Node 20 floor), and `pino` takes patch updates only (pino 10.4 crashes inside a
+      pkg binary). `.ncurc.js` has the full rationale.
+    - `ioredis` follows latest. This library never creates a Redis client, it uses
+      the one the caller injects, so `examples/test.js` tracks the major consumers
+      (EmailEngine) actually pass in.
+    - `express` is rejected from auto-update and kept on the 4.x line.
+- devDependencies are pinned to exact versions (no `^` or `~`).
 - After running `npm run update`, run `npm test` and review `npm audit`. Runtime
   dependencies must remain CommonJS-compatible (see Packaging Compatibility);
   do not let an update pull in a pure-ESM major.
@@ -163,10 +172,8 @@ When in doubt, check a candidate dependency's `package.json` for a CommonJS
 
 ## CI / GitHub Actions
 
-- `test.yaml` - runs `npm test` on Node 22 and 24 for pushes to `master` and PRs.
-- `codeql.yml` - CodeQL "code quality" / security scanning of the JavaScript and
-  GitHub Actions code (tests and examples are excluded via
-  `.github/codeql/codeql-config.yml`). Review and resolve any CodeQL alerts.
+- `test.yaml` - runs `npm run lint`, `npm run format:check` and `npm test` on
+  Node 20, 22 and 24 for pushes to `master` and PRs.
 - `release.yaml` - release-please + npm publish on pushes to `master`.
 
 After pushing, check the workflow runs (e.g. `gh run list --branch master`) and
@@ -182,7 +189,12 @@ GitHub incident before assuming the failure is caused by the code.
   double hyphens (`--`), em dashes, or en dashes.
 - Keep the code CommonJS and `'use strict'` (see Packaging Compatibility).
 - Formatting follows `.prettierrc.js` (4-space indent, single quotes, 160-column
-  width, no trailing commas, `lf` line endings).
+  width, no trailing commas, `lf` line endings, `arrowParens: 'avoid'`).
+- Linting follows `eslint.config.js`, the shared Postal Systems flat config. Keep
+  it identical to the other repos except for the "Repo-specific" block at the end,
+  where `no-await-in-loop` is off (sequential ACME polling and retries) and
+  `no-bitwise` is off for the DER code.
+- Before committing code changes: `npm run format`, `npm run lint`, `npm test`.
 - When composing git commit messages, do not include Claude as a co-contributor.
 - For commits that do not change runtime behavior (docs, comments, CI/workflow
   tweaks, formatting), append `[skip ci]` to the commit message to avoid
