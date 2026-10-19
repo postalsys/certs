@@ -40,6 +40,7 @@ A certificate record is split across Redis fields on purpose. `SIDE_FIELDS` in `
 merged into one `domain:<d>:data` blob by a read-then-write. That merge is only safe under the
 per-domain operation lock, so anything written from a path that does not hold the lock has to be a
 side field. Renewal information is refreshed in the background, which is exactly why it is one.
+
 - `lib/msgpack.js` - thin `@msgpack/msgpack` wrapper that keeps the call-site
   contract of the deprecated `msgpack5` it replaced (Buffer in/out, undefined
   properties omitted, trailing bytes ignored)
@@ -137,12 +138,12 @@ When in doubt, check a candidate dependency's `package.json` for a CommonJS
   library to add a feature is how this package ended up on an abandoned stack the
   first time.
 - Update policy lives in `.ncurc.js`:
-  - `ioredis` is held to **minor** updates only (stay on 5.x). This library never
-    creates a Redis client, it uses the one the caller injects, and EmailEngine is
-    itself capped at ioredis 5 by bullmq. Keeping `examples/test.js` on the same
-    major means it exercises the client consumers actually pass in.
-  - `eslint-config-prettier` and `express` are pinned (rejected from auto-update).
-    `express` is kept on the 4.x line.
+    - `ioredis` is held to **minor** updates only (stay on 5.x). This library never
+      creates a Redis client, it uses the one the caller injects, and EmailEngine is
+      itself capped at ioredis 5 by bullmq. Keeping `examples/test.js` on the same
+      major means it exercises the client consumers actually pass in.
+    - `eslint-config-prettier` and `express` are pinned (rejected from auto-update).
+      `express` is kept on the 4.x line.
 - After running `npm run update`, run `npm test` and review `npm audit`. Runtime
   dependencies must remain CommonJS-compatible (see Packaging Compatibility);
   do not let an update pull in a pure-ESM major.
@@ -153,10 +154,10 @@ When in doubt, check a candidate dependency's `package.json` for a CommonJS
   Merging the release PR tags a version, generates the changelog, and publishes
   to npm with `npm publish --provenance`.
 - Commit messages drive releases, so use **Conventional Commits**:
-  - `fix:` -> patch release
-  - `feat:` -> minor release
-  - `feat!:` / `fix!:` or a `BREAKING CHANGE:` footer -> major release
-  - `chore:`, `docs:`, `test:`, `ci:`, `refactor:` -> no release
+    - `fix:` -> patch release
+    - `feat:` -> minor release
+    - `feat!:` / `fix!:` or a `BREAKING CHANGE:` footer -> major release
+    - `chore:`, `docs:`, `test:`, `ci:`, `refactor:` -> no release
 - Only `fix:`/`feat:` commits produce a release, so use them for user-facing
   runtime changes.
 
