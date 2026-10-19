@@ -76,6 +76,7 @@ they are not runtime dependencies of the library.
 
 ```
 npm test                 # Run the full test suite (node --test --test-force-exit test/*.test.js)
+npm run test:cjs         # The suite with require(esm) disabled (see Platform constraints)
 npm run test:coverage    # The same suite under c8
 node --test --test-force-exit test/der.test.js                    # A single test file
 node --test --test-force-exit --test-name-pattern="RFC 7638" test/jose.test.js  # Matching tests only
@@ -109,32 +110,52 @@ npm run update           # Refresh dependencies (see Dependency Management)
 - For live testing against a real CA, `examples/test.js` serves the challenge on port
   7003 for `localdev.kreata.ee`, which an SSH reverse tunnel
   (`ssh -R 7003:localhost:7003 kreata.ee`) forwards from that host's nginx.
-- CI (`.github/workflows/test.yaml`) runs lint, format check and `npm test` on Node 20, 22 and 24.
+- CI (`.github/workflows/test.yaml`) runs lint, format check and `npm test` on Node 20, 22 and 24,
+  plus `npm run test:cjs` on Node 22 and 24.
 - `test/msgpack.test.js` pins the stored wire format against hex fixtures produced
   by the original `msgpack5`. Redis keeps certificate and ACME account records
   indefinitely, so any change to serialization must still decode those fixtures
   and re-encode them to identical bytes. Do not re-record them to make a test pass.
 - Always run `npm test` and confirm it is green before committing.
 
-## Packaging Compatibility (important)
+## Platform constraints (important)
 
-Downstream consumers bundle this library into a single self-contained binary
-using **`@yao-pkg/pkg`** (a maintained fork of `vercel/pkg`). `@yao-pkg/pkg`
-packages **CommonJS** and does not support pure-ESM modules. Because of this:
+Downstream consumers, EmailEngine above all, bundle this library into a single
+self-contained binary with **`@yao-pkg/pkg`** (a maintained fork of `vercel/pkg`).
+That binary snapshots a **CommonJS** module graph and cannot load ES modules, and
+the DigitalOcean one-click images update EmailEngine but never the Node.js under
+it. Two rules follow:
 
-- This library must stay **CommonJS** (`require`/`module.exports`,
-  `'use strict'`, `sourceType: "script"`). Do not convert it to ESM.
-- **Do not add dependencies that are pure ESM** (ESM-only, no CommonJS export).
-  Before adding or upgrading a dependency, confirm it still ships a CommonJS
-  build. A major-version bump that drops CommonJS (common in the ecosystem -
-  e.g. newer majors of many small utility packages) will break the packaged
-  binary even though `npm test` still passes here.
-- Avoid dependencies that rely on `import.meta`, top-level `await`, or
-  `package.json` `"type": "module"` without a CJS fallback.
-- Prefer Node.js built-ins over new third-party packages where practical.
+- **Node.js 20 is the minimum.** Runtime code, tests and tooling must work on
+  Node 20, 22 and 24 (`engines.node` is `>=20.0.0`).
+- **Everything that reaches runtime must be genuinely CommonJS-loadable.**
+    - This library stays CommonJS (`require`/`module.exports`, `'use strict'`,
+      `sourceType: "script"`). Do not convert it to ESM.
+    - `require()` of the package and of every runtime dependency must work with
+      `--no-experimental-require-module`. Node 22+ (and 20.19) load ES modules
+      through `require()` by default, which hides an ESM-only dependency until the
+      pkg binary fails. A CommonJS entry that only wraps a dynamic `import()` does
+      not count.
+    - Never add or upgrade to an ESM-only dependency, nor to one that needs a newer
+      Node than 20. Pin the last compatible major in `.ncurc.js` (`reject` or
+      `target`) with a comment giving the reason, the way `undici` and `pino` are
+      pinned there.
+    - Avoid dependencies that rely on `import.meta`, top-level `await`, or
+      `"type": "module"` without a CommonJS fallback. Prefer Node.js built-ins over
+      new third-party packages where practical.
 
-When in doubt, check a candidate dependency's `package.json` for a CommonJS
-`main`/`exports` entry (not only an `import` condition) before adding it.
+**How to check:** `npm run test:cjs` runs the whole suite with
+`NODE_OPTIONS=--no-experimental-require-module`. CI runs it on Node 22 and 24.
+A plain `npm test` on Node 22+ stays green with an ESM-only dependency, so run
+`test:cjs` after any dependency change.
+
+**pino and real-require.** pino depends on `real-require`, whose `realImport()` is a
+dynamic `import()`. pino loads it only from `lib/transport-stream.js`, inside the
+worker thread a transport runs in, so it is reached only when a logger is built
+with the `transport` option. This library never does: it calls `pino()` with
+defaults or `pino({ enabled: false })`, or uses the logger the caller injects.
+Keep it that way; configuring a pino transport here would put a dynamic
+`import()` on the runtime path.
 
 ## Dependency Management
 
@@ -154,8 +175,8 @@ When in doubt, check a candidate dependency's `package.json` for a CommonJS
     - `express` is rejected from auto-update and kept on the 4.x line.
 - devDependencies are pinned to exact versions (no `^` or `~`).
 - After running `npm run update`, run `npm test` and review `npm audit`. Runtime
-  dependencies must remain CommonJS-compatible (see Packaging Compatibility);
-  do not let an update pull in a pure-ESM major.
+  dependencies must remain CommonJS-compatible (see Platform constraints), so
+  also run `npm run test:cjs`; do not let an update pull in a pure-ESM major.
 
 ## Release Process
 
@@ -173,7 +194,8 @@ When in doubt, check a candidate dependency's `package.json` for a CommonJS
 ## CI / GitHub Actions
 
 - `test.yaml` - runs `npm run lint`, `npm run format:check` and `npm test` on
-  Node 20, 22 and 24 for pushes to `master` and PRs.
+  Node 20, 22 and 24 for pushes to `master` and PRs, and `npm run test:cjs` on
+  Node 22 and 24.
 - `release.yaml` - release-please + npm publish on pushes to `master`.
 
 After pushing, check the workflow runs (e.g. `gh run list --branch master`) and
@@ -187,7 +209,7 @@ GitHub incident before assuming the failure is caused by the code.
 - Never use emojis in code or documentation; use printable ASCII only.
 - Use a single hyphen-minus (`-`) as a dash in user-facing strings. Never use
   double hyphens (`--`), em dashes, or en dashes.
-- Keep the code CommonJS and `'use strict'` (see Packaging Compatibility).
+- Keep the code CommonJS and `'use strict'` (see Platform constraints).
 - Formatting follows `.prettierrc.js` (4-space indent, single quotes, 160-column
   width, no trailing commas, `lf` line endings, `arrowParens: 'avoid'`).
 - Linting follows `eslint.config.js`, the shared Postal Systems flat config. Keep
