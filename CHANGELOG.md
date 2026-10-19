@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.0.0](https://github.com/postalsys/certs/compare/v1.4.7...v2.0.0) (2026-10-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* the package now has an exports map, so only the entry point, lib/* and package.json can be imported.
+
+### Features
+
+* migrate to TypeScript with ES module and CommonJS builds ([2cdc26f](https://github.com/postalsys/certs/commit/2cdc26f46b2331b35a41fd60370fba5809d64202))
+
+
+### Bug Fixes
+
+* parse ACME Link headers in linear time and match whole relation types ([2cdc26f](https://github.com/postalsys/certs/commit/2cdc26f46b2331b35a41fd60370fba5809d64202))
+* refuse ACME challenge tokens outside the base64url alphabet ([2cdc26f](https://github.com/postalsys/certs/commit/2cdc26f46b2331b35a41fd60370fba5809d64202))
+* report malformed ACME server responses as AcmeError instead of a TypeError ([2cdc26f](https://github.com/postalsys/certs/commit/2cdc26f46b2331b35a41fd60370fba5809d64202))
+
 ## [1.4.7](https://github.com/postalsys/certs/compare/v1.4.6...v1.4.7) (2026-10-19)
 
 
