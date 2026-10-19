@@ -22,55 +22,6 @@ function createMockRedis() {
         return sets.get(key);
     }
 
-    function createMulti() {
-        const commands = [];
-
-        const chain = {
-            hmset(key, obj) {
-                commands.push(() => redis.hmset(key, obj));
-                return chain;
-            },
-            set(key, value) {
-                commands.push(() => redis.set(key, value));
-                return chain;
-            },
-            expire(key, ttl) {
-                commands.push(() => redis.expire(key, ttl));
-                return chain;
-            },
-            hdel(key, ...fields) {
-                commands.push(() => redis.hdel(key, ...fields));
-                return chain;
-            },
-            hincrby(key, field, increment) {
-                commands.push(() => redis.hincrby(key, field, increment));
-                return chain;
-            },
-            sadd(key, member) {
-                commands.push(() => redis.sadd(key, member));
-                return chain;
-            },
-            srem(key, member) {
-                commands.push(() => redis.srem(key, member));
-                return chain;
-            },
-            async exec() {
-                const results = [];
-                for (const cmd of commands) {
-                    try {
-                        const result = await cmd();
-                        results.push([null, result]);
-                    } catch (err) {
-                        results.push([err, null]);
-                    }
-                }
-                return results;
-            }
-        };
-
-        return chain;
-    }
-
     const redis = {
         async hmset(key, obj) {
             const hash = getHash(key);
@@ -167,6 +118,55 @@ function createMockRedis() {
             return createMulti();
         }
     };
+
+    function createMulti() {
+        const commands = [];
+
+        const chain = {
+            hmset(key, obj) {
+                commands.push(() => redis.hmset(key, obj));
+                return chain;
+            },
+            set(key, value) {
+                commands.push(() => redis.set(key, value));
+                return chain;
+            },
+            expire(key, ttl) {
+                commands.push(() => redis.expire(key, ttl));
+                return chain;
+            },
+            hdel(key, ...fields) {
+                commands.push(() => redis.hdel(key, ...fields));
+                return chain;
+            },
+            hincrby(key, field, increment) {
+                commands.push(() => redis.hincrby(key, field, increment));
+                return chain;
+            },
+            sadd(key, member) {
+                commands.push(() => redis.sadd(key, member));
+                return chain;
+            },
+            srem(key, member) {
+                commands.push(() => redis.srem(key, member));
+                return chain;
+            },
+            async exec() {
+                const results = [];
+                for (const cmd of commands) {
+                    try {
+                        const result = await cmd();
+                        results.push([null, result]);
+                    } catch (err) {
+                        results.push([err, null]);
+                    }
+                }
+                return results;
+            }
+        };
+
+        return chain;
+    }
 
     return redis;
 }

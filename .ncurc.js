@@ -1,3 +1,5 @@
+'use strict';
+
 module.exports = {
     upgrade: true,
     // undici 8.x requires Node 22.19+ and crashes at require() on Node 20. EmailEngine, the main
@@ -15,7 +17,8 @@ module.exports = {
         }
         return name === 'undici' ? 'minor' : 'latest';
     },
-    reject: ['eslint-config-prettier', 'express']
+    // express is a dev-only dependency of examples/test.js and stays on the 4.x line.
+    reject: ['express']
     // ioredis follows latest on purpose: this library never creates a Redis client, it uses the one
     // the caller injects, so examples/test.js has to exercise the major consumers really pass in.
     // That was 5.x while EmailEngine was capped there by bullmq 5; both moved to 6 in August 2026,

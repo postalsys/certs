@@ -55,6 +55,7 @@ function decodeJson(base64) {
  */
 function createMockAcmeServer(options = {}) {
     const ca = createTestCa();
+    const alternateCa = createTestCa({ name: 'Alternate Test CA' });
 
     const state = {
         ca,
@@ -104,7 +105,7 @@ function createMockAcmeServer(options = {}) {
         let jws;
         try {
             jws = JSON.parse(body);
-        } catch (err) {
+        } catch {
             return { error: problem(400, 'malformed', 'Request body is not JSON') };
         }
 
@@ -276,7 +277,7 @@ function createMockAcmeServer(options = {}) {
                 // A real server burns the nonce before rejecting it.
                 try {
                     state.nonces.delete(decodeJson(JSON.parse(opts.body).protected).nonce);
-                } catch (err) {
+                } catch {
                     // malformed bodies are handled by verifyJws below
                 }
             }
@@ -502,7 +503,6 @@ function createMockAcmeServer(options = {}) {
         order.status = 'valid';
     }
 
-    const alternateCa = createTestCa({ name: 'Alternate Test CA' });
     state.certIdByAri = new Map();
 
     return {

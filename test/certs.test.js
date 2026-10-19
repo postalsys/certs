@@ -516,6 +516,8 @@ describe('Certs acquisition', () => {
         return { server, tokens };
     }
 
+    const silentLogger = () => ({ trace: () => false, info: () => false, error: () => false });
+
     // Locking is stubbed on every instance this suite builds. ioredfour needs a real Redis, and a
     // lock it cannot reach does not fail, it waits: five getAcmeAccount tests once hung for over a
     // minute each in CI, and passed locally only because a Redis happened to be running. Any test
@@ -525,8 +527,6 @@ describe('Certs acquisition', () => {
         stubLocking(certs);
         return certs;
     };
-
-    const silentLogger = () => ({ trace: () => false, info: () => false, error: () => false });
 
     // Brings a stored certificate to the point where the lifetime rule calls it due, and clears any
     // failsafe lock a previous failure left behind.
