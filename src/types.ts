@@ -55,7 +55,8 @@ export interface CertificateData {
     certVersion?: number | null | undefined;
     /**
      * Why the call that returned this record did not renew it. Never stored: it describes one call
-     * to acquireCert(), while `lastError` describes the record.
+     * to acquireCert(), while `lastError` describes the record. A domain with nothing stored gets
+     * it on a `{ domain, status: 'failed', renewalError }` record that has no `cert`.
      */
     renewalError?: ErrorRecord | undefined;
 }

@@ -708,8 +708,13 @@ describe('Certs acquisition', () => {
 
             const data = await certs.acquireCert('example.com');
 
-            assert.equal(data, false);
+            // Nothing is stored and nothing was attempted, but the caller is still told why
+            assert.deepEqual(Object.keys(data).sort(), ['domain', 'renewalError', 'status']);
+            assert.equal(data.status, 'failed');
+            assert.equal(data.cert, undefined);
+            assert.equal(data.renewalError.code, 'ERENEWALBLOCKED');
             assert.equal(server.state.requests.length, 0);
+            assert.equal(await certs.loadCertificateData('example.com'), false, 'and the built record is not written');
         });
 
         it('should keep serving the existing certificate when a renewal fails', async () => {
@@ -838,8 +843,88 @@ describe('Certs acquisition', () => {
                 return true;
             });
 
-            assert.equal(await certs.acquireCert('not a domain'), false);
+            const data = await certs.acquireCert('not a domain');
+            assert.equal(data.status, 'failed');
+            assert.equal(data.renewalError.code, 'invalid_domain');
             assert.equal(server.state.requests.length, 0);
+        });
+
+        describe('a first order that does not happen', () => {
+            // Regression: with nothing stored, a domain that failed validation came back as plain
+            // false, and validation failures are deliberately not written to the record, so the
+            // caller had no way to learn why its first certificate was not ordered.
+            it('should return the validation failure with its code, without storing anything', async () => {
+                const certs = newCerts(redis);
+                const { server } = connect(certs);
+                stubLocking(certs);
+                certs.validateDomain = async () => {
+                    let err: any = new Error('LE not listed in the CAA record for example.com (example.com)');
+                    err.code = 'caa_mismatch';
+                    err.responseCode = 403;
+                    throw err;
+                };
+
+                const before = Date.now();
+                const data = await certs.acquireCert('Example.COM');
+
+                assert.equal(data.domain, 'example.com', 'the normalized name');
+                assert.equal(data.status, 'failed');
+                assert.equal(data.cert, undefined);
+                assert.equal(data.lastError, undefined, 'nothing is stored, so there is no record history');
+                assert.equal(data.renewalError.err, 'LE not listed in the CAA record for example.com (example.com)');
+                assert.equal(data.renewalError.code, 'caa_mismatch');
+                assert.ok(new Date(data.renewalError.time).getTime() >= before);
+                assert.equal(server.state.requests.length, 0);
+                assert.equal(await certs.loadCertificateData('example.com'), false);
+                assert.deepEqual(await certs.listCertificateDomains(), []);
+                assert.equal(await redis.exists(certs.getKey('lock:safe:example.com')), 0, 'and no failsafe lock is armed');
+            });
+
+            it('should hand the same reason back through getCertificate()', async () => {
+                const certs = newCerts(redis);
+                connect(certs);
+                stubLocking(certs);
+                certs.validateDomain = async () => {
+                    let err: any = new Error('no such name');
+                    err.code = 'ENOTFOUND';
+                    throw err;
+                };
+
+                const data = await certs.getCertificate('example.com', false);
+
+                assert.ok(data);
+                assert.equal(data.status, 'failed');
+                assert.equal(data.renewalError?.code, 'ENOTFOUND');
+                assert.equal(await certs.getCertificate('example.com', true), false, 'a read still finds nothing');
+            });
+
+            it('should report the stored reason of the order that armed the failsafe lock', async () => {
+                const certs = newCerts(redis);
+                connect(certs);
+                stubLocking(certs);
+                certs.acme.createCertificate = async () => {
+                    let err: any = new Error('urn:ietf:params:acme:error:unauthorized');
+                    err.code = 'EACMEUNAUTHORIZED';
+                    throw err;
+                };
+
+                // The order itself failing still throws, with the original error
+                await assert.rejects(certs.acquireCert('example.com'), (err: any) => err.code === 'EACMEUNAUTHORIZED');
+
+                const data = await certs.acquireCert('example.com');
+                assert.equal(data.status, 'failed');
+                assert.equal(data.renewalError.code, 'EACMEUNAUTHORIZED');
+                assert.equal(data.lastError.code, 'EACMEUNAUTHORIZED');
+            });
+
+            it('should still return false when another worker is ordering it', async () => {
+                const certs = newCerts(redis);
+                connect(certs);
+                stubLocking(certs);
+                certs.locking.waitAcquireLock = async () => ({ success: false });
+
+                assert.equal(await certs.acquireCert('example.com'), false);
+            });
         });
     });
 

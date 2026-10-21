@@ -186,13 +186,20 @@ function errorRecord(err: CertsError): ErrorRecord {
  * whole point of the field: acquireCert() answers from the stored record without attempting
  * anything whenever renewal is not due, so a stored error outlives the failure it names.
  *
+ * A domain with nothing stored still gets a record: `{ domain, status: 'failed', renewalError }`,
+ * built here and never written. Returning false there used to lose the reason entirely, because a
+ * validation failure is deliberately not recorded, so a caller ordering its first certificate had
+ * nothing to tell its operator but a guess. A `failed` record without `cert` is a shape callers
+ * already handle: the store holds exactly that after a first order the CA refused.
+ *
  * @param certificateData Record to hand back, or false when there is none
  * @param renewalError `{ err, code, type, time }`
- * @returns A copy carrying the reason, or `false` unchanged
+ * @param domain Normalized domain, named on the record built when there is none
+ * @returns A copy carrying the reason
  */
-function withRenewalError(certificateData: CertificateData | false, renewalError: ErrorRecord): CertificateData | false {
+function withRenewalError(certificateData: CertificateData | false, renewalError: ErrorRecord, domain: string): CertificateData {
     if (!certificateData) {
-        return certificateData;
+        return { domain, status: 'failed', renewalError };
     }
 
     return Object.assign({}, certificateData, { renewalError });
@@ -648,7 +655,7 @@ export class Certs {
             // the failure that armed the lock rather than the moment of this call.
             const stored = existingCertificateData && existingCertificateData.lastError;
 
-            return withRenewalError(existingCertificateData, stored ? Object.assign({}, stored) : errorRecord(blockedError));
+            return withRenewalError(existingCertificateData, stored ? Object.assign({}, stored) : errorRecord(blockedError), domain);
         }
 
         try {
@@ -661,7 +668,7 @@ export class Certs {
             // Not written to the record: nothing was ordered, and a CAA record or a DNS answer that
             // stops validation today is a property of the domain rather than of the certificate.
             // The caller still asked for a renewal and is not getting one.
-            return withRenewalError(existingCertificateData, errorRecord(err as CertsError));
+            return withRenewalError(existingCertificateData, errorRecord(err as CertsError), domain);
         }
 
         let lock = await this.locking.waitAcquireLock(domainOpLockKey, OP_LOCK_TTL, 3 * 60 * 1000);

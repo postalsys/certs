@@ -185,7 +185,10 @@ https-front `require('@postalsys/certs/lib/tools')`.
   and stays under the backstop, and msgpack round trips; `test/acme-client-fuzz-test.ts`
   corrupts CA responses (bodies, fields, headers, status codes) and requires every
   order to end in a certificate or an `AcmeError`, every presented challenge to be
-  removed, and no unhandled rejection. CA responses are untrusted input: a malformed
+  removed, and no unhandled rejection; `test/acquire-outcome-fuzz-test.ts` drives `acquireCert()`
+  from random starting states (stored record, failsafe lock, validation, concurrent order, order
+  outcome) and requires a certificate, a `failed` record carrying `renewalError`, a thrown error, or
+  `false` only for an order another worker is running. CA responses are untrusted input: a malformed
   one has to become an `AcmeError`, never a TypeError. `FUZZ_SEED` and
   `FUZZ_ITERATIONS` control a run; a failure names its seed and case. Raise
   `FUZZ_ITERATIONS` for a soak run after touching `src/der.ts` or `src/acme-client.ts`.

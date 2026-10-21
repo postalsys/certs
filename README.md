@@ -126,7 +126,7 @@ Static factory method. Returns a new `Certs` instance.
 
 Returns stored certificate data for the domain. If the certificate is missing or expired, automatically acquires a new one via ACME unless `skipAcquire` is `true`.
 
-Returns an object with `cert`, `privateKey`, `ca`, `validFrom`, `validTo`, `altNames`, `serialNumber`, `fingerprint`, `status`, and `lastError`, or `false` if no certificate exists. When a renewal was attempted and did not happen, the record also carries `renewalError` - see below.
+Returns an object with `cert`, `privateKey`, `ca`, `validFrom`, `validTo`, `altNames`, `serialNumber`, `fingerprint`, `status`, and `lastError`, or `false` if no certificate exists. When a renewal or a first order was attempted and did not happen, the record also carries `renewalError` - see below.
 
 ### `acquireCert(domain)`
 
@@ -143,7 +143,18 @@ Read `renewalError`, not `lastError`, to decide whether to report a failure. The
 
 A caller that reports `lastError` therefore announces failures that were settled long ago. `renewalError` is absent whenever the certificate is fine, whether it was renewed, was not due, or is being renewed by someone else right now.
 
-The field annotates a record, so it only reaches a caller that has one. A domain with no stored certificate reports a failure the way it always did: `acquireCert()` throws when the order fails, and returns `false` when the domain does not validate or a failsafe lock is holding it. So a caller handles three outcomes - a record, a record with `renewalError`, and `false` or a thrown error.
+#### A first certificate that could not be ordered
+
+A domain with no stored certificate gets the reason too. When the domain does not validate (an invalid name, or a CAA record that does not list the CA) or a failsafe lock from an earlier failure is holding it, `acquireCert()` returns `{ domain, status: 'failed', renewalError }`, a record with no `cert` that is built for the call and never stored. An order the CA refused still throws, with the original error and its `code`, as it always did, and the stored record (`status: 'failed'`, `lastError`) keeps that reason for later reads.
+
+So a caller handles four outcomes:
+
+- a record with `cert` and no `renewalError` - the certificate is fine
+- a record with `cert` and `renewalError` - keep serving it, report the failed renewal
+- a record without `cert`, with `status: 'failed'` and `renewalError` - there is nothing to serve, and `renewalError.err` / `renewalError.code` say why
+- a thrown error - the order itself failed
+
+`false` now means that nothing failed, such as a domain another worker is ordering right now. Always check `cert` (or `status === 'valid'`) before serving a returned record: a stored `failed` or `pending` record carries no certificate either.
 
 ### `routeHandler(domain, token)`
 
