@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.1](https://github.com/postalsys/certs/compare/v2.0.0...v2.0.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* report why a first certificate order did not happen ([628158b](https://github.com/postalsys/certs/commit/628158b1442d2428056899838bd43ab2250325c3))
+
 ## [2.0.0](https://github.com/postalsys/certs/compare/v1.4.7...v2.0.0) (2026-10-19)
 
 
