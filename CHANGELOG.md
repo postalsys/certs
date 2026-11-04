@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.4](https://github.com/postalsys/certs/compare/v2.0.3...v2.0.4) (2026-11-04)
+
+
+### Bug Fixes
+
+* update dependencies ([2baaa53](https://github.com/postalsys/certs/commit/2baaa5363cc2ed8d53e20f12b9d27be72a9c5ccc))
+
 ## [2.0.3](https://github.com/postalsys/certs/compare/v2.0.2...v2.0.3) (2026-10-29)
 
 
