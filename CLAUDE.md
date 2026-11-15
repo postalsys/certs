@@ -75,7 +75,7 @@ side field. Renewal information is refreshed in the background, which is exactly
 
 ## Technology Stack
 
-- **Runtime**: Node.js 20 or newer (`engines.node`); CI tests on 20, 22, 24 and latest.
+- **Runtime**: Node.js 22.19 or newer (`engines.node`, the floor undici 8 sets); CI tests on 22, 24 and latest.
 - **Language**: TypeScript (`tsconfig.base.json`: strict, `exactOptionalPropertyTypes`,
   `noImplicitOverride`, `erasableSyntaxOnly`, `isolatedModules`), compiled twice from
   the same sources. The tsconfig files are shared with nodemailer and imapflow.
@@ -114,8 +114,8 @@ npm run update           # Refresh dependencies (see Dependency Management)
 
 ## Engine target and module format
 
-- TypeScript `target: ES2022` with `lib: ES2023`. `@types/node` is pinned to the 20.x
-  line (see `.ncurc.cjs`) so the compiler rejects APIs that do not exist on Node 20.
+- TypeScript `target: ES2022` with `lib: ES2023`. `@types/node` is pinned to the 22.x
+  line (see `.ncurc.cjs`) so the compiler rejects APIs that do not exist on Node 22.
 - Source uses ES module syntax and is compiled twice from the same files:
   `tsconfig.esm.json` (`module: nodenext`) into `dist/esm/` and `tsconfig.cjs.json`
   (`module: commonjs`) into `dist/cjs/`. Because every file must compile both ways,
@@ -210,24 +210,22 @@ https-front `require('@postalsys/certs/lib/tools')`.
 
 Downstream consumers, EmailEngine above all, bundle this library into a single
 self-contained binary with **`@yao-pkg/pkg`** (a maintained fork of `vercel/pkg`).
-That binary snapshots a **CommonJS** module graph and cannot load ES modules, and
-the DigitalOcean one-click images update EmailEngine but never the Node.js under
-it. Two rules follow:
+That binary snapshots a **CommonJS** module graph and cannot load ES modules.
+Two rules follow:
 
-- **Node.js 20 is the minimum.** Runtime code, tests and tooling must work on
-  Node 20, 22 and 24 (`engines.node` is `>=20.0.0`).
+- **Node.js 22.19 is the minimum.** Runtime code, tests and tooling must work on
+  Node 22, 24 and later (`engines.node` is `>=22.19.0`, what undici 8 requires).
 - **The CommonJS build and everything it reaches must be genuinely CommonJS-loadable.**
     - Keep the dual build. Never drop the CommonJS output or make the CommonJS entry
       depend on ES-module-only syntax.
     - `require()` of the package and of every runtime dependency must work with
-      `--no-experimental-require-module`. Node 22+ (and 20.19) load ES modules
+      `--no-experimental-require-module`. Node 22+ loads ES modules
       through `require()` by default, which hides an ESM-only dependency until the
       pkg binary fails. A CommonJS entry that only wraps a dynamic `import()` does
       not count.
     - Never add or upgrade to an ESM-only dependency, nor to one that needs a newer
-      Node than 20. Pin the last compatible major in `.ncurc.cjs` (`reject` or
-      `target`) with a comment giving the reason, the way `undici` and `pino` are
-      pinned there. A `"type": "module"` package with a `require` condition in its
+      Node than the floor above. Pin the last compatible major in `.ncurc.cjs` (`reject` or
+      `target`) with a comment giving the reason, the way `pino` is pinned there. A `"type": "module"` package with a `require` condition in its
       `exports` (ioredfour) is a dual package and is fine.
     - Keep `require()`/`import` paths static so pkg can trace the graph. pkg does
       not resolve the `exports` map at build time, so a deep import such as
@@ -262,10 +260,10 @@ Keep it that way; configuring a pino transport here would put a dynamic
   library to add a feature is how this package ended up on an abandoned stack the
   first time.
 - Update policy lives in `.ncurc.cjs`:
-    - `undici` stays on the 7.x line (8.x needs Node 22.19+ and EmailEngine keeps a
-      Node 20 floor), and `pino` takes patch updates only (pino 10.4 crashes inside a
-      pkg binary). `.ncurc.cjs` has the full rationale.
-    - `@types/node` stays on the 20.x line, and `typescript` takes minor updates only
+    - `pino` takes patch updates only (pino 10.4 crashes inside a pkg binary).
+      `.ncurc.cjs` has the full rationale. `undici` follows latest; it was held on 7.x
+      while EmailEngine kept a Node 20 floor.
+    - `@types/node` stays on the 22.x line, and `typescript` takes minor updates only
       (typescript-eslint's peer range excludes TypeScript 7).
     - `ioredis` follows latest. This library never creates a Redis client, it uses
       the one the caller injects, so `examples/test.js` tracks the major consumers
@@ -294,8 +292,8 @@ Keep it that way; configuring a pino transport here would put a dynamic
 ## CI / GitHub Actions
 
 - `test.yaml` - on pushes to `master` and PRs: `npm run lint`, `npm run format:check`
-  and `npm test` on Node 20, 22, 24 and latest (Node 24 runs `npm run test:coverage`
-  instead), `npm run test:cjs` on Node 22 and later, and a `pkg` job running
+  and `npm test` on Node 22, 24 and latest (Node 24 runs `npm run test:coverage`
+  instead), `npm run test:cjs` on every one of them, and a `pkg` job running
   `npm run test:pkg`.
 - `release.yaml` - release-please + npm publish on pushes to `master`.
 

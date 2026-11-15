@@ -2,17 +2,12 @@
 
 module.exports = {
     upgrade: true,
-    // undici 8.x requires Node 22.19+ and crashes at require() on Node 20. EmailEngine, the main
-    // consumer of this package, keeps a hard Node 20 floor because the DigitalOcean one-click images
-    // self-update EmailEngine but never the runtime under it. Stay on the latest 7.x so security
-    // patches still flow, and lift this only when that floor moves.
-    //
     // pino is held on 10.3.x to match EmailEngine, which bundles this package into a pkg binary.
     // pino 10.4.0 makes lib/caller.js prefer util.getCallSites(), and inside a pkg binary that call
     // aborts the whole process with a V8 CHECK failure (SIGTRAP) the moment a logger is constructed.
     // 'patch' because the break arrived in a minor. Lift together with EmailEngine's cap.
     //
-    // @types/node stays on the 20.x line so the compiler rejects APIs that do not exist on Node 20,
+    // @types/node stays on the 22.x line so the compiler rejects APIs that do not exist on Node 22,
     // the oldest supported version. typescript-eslint declares a peer range that excludes
     // TypeScript 7, so typescript takes minor updates only.
     target: name => {
@@ -22,7 +17,7 @@ module.exports = {
         if (name === 'pino') {
             return 'patch';
         }
-        return name === 'undici' ? 'minor' : 'latest';
+        return 'latest';
     },
     // express is a dev-only dependency of examples/test.js and stays on the 4.x line.
     reject: ['express']

@@ -10,7 +10,7 @@ The ACME client is built in (`src/acme-client.ts`) and speaks RFC 8555 plus the 
 npm install @postalsys/certs
 ```
 
-**Requirements:** Node.js 20+, Redis
+**Requirements:** Node.js 22.19+, Redis
 
 The package is written in TypeScript and ships both an ES module and a CommonJS build, each with type declarations. `import { Certs } from '@postalsys/certs'` and `const { Certs } = require('@postalsys/certs')` both work, and so do the deep imports of earlier releases, such as `require('@postalsys/certs/lib/settings')`. The CommonJS build loads no ES module, so it can be bundled with `@yao-pkg/pkg`.
 
