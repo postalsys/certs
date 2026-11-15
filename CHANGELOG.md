@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/postalsys/certs/compare/v2.0.5...v3.0.0) (2026-11-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* Node.js 22.19 or newer is required. undici 8 throws when it is loaded on Node 20.
+
+### Bug Fixes
+
+* require Node.js 22.19 and move to undici 8 ([5a676da](https://github.com/postalsys/certs/commit/5a676da65730390582e249f415dafb2c1db1f384))
+
 ## [2.0.5](https://github.com/postalsys/certs/compare/v2.0.4...v2.0.5) (2026-11-10)
 
 
