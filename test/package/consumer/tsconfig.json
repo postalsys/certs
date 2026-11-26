@@ -9,5 +9,5 @@
         "noEmit": true,
         "types": ["node"]
     },
-    "files": ["esm-consumer.ts", "cjs-consumer.cts"]
+    "files": ["esm-consumer.ts", "cjs-consumer.cts", "redis-errors.d.ts"]
 }
